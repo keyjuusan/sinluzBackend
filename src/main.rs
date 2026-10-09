@@ -53,7 +53,7 @@ async fn main() {
     }
 
     let port = 1234;
-    let host = format!("127.0.0.1:{port}");
+    let host = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&host).await.unwrap();
 
     let canal = CanalActividad::nuevo(MAX_CONEXIONES_ACTIVIDAD);

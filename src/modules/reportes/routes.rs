@@ -11,6 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
+use utoipa::ToSchema;
 
 use crate::modules::actividad::domain::EventoActividad;
 use crate::modules::actividad::infra::CanalActividad;
@@ -35,21 +36,42 @@ pub fn router(pool: PgPool, canal: CanalActividad) -> Router {
         .with_state(EstadoReportes { repositorio, canal })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SolicitudCrearReporte {
+    /// Identificador opaco del dispositivo que reporta.
     pub id_usuario: String,
+    /// Latitud del corte en grados decimales (WGS84).
     pub lat: f64,
+    /// Longitud del corte en grados decimales (WGS84).
     pub lng: f64,
+    /// Estimación en horas enteras (0–168) de cuánto suele durar el corte. `null` si no se conoce.
     pub horas_duracion: Option<u16>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RespuestaRegistroReporte {
+    /// Identificador del reporte creado.
     pub id: String,
+    /// Instante UTC (RFC 3339) en que el servidor registró el reporte.
     pub creado: String,
 }
 
+/// Registra un corte de suministro eléctrico notificado por un dispositivo.
+///
+/// Valida el cuerpo, aplica la medida anti-spam (cooldown) por dispositivo y
+/// ubicación, persiste el reporte y publica el evento de actividad.
+#[utoipa::path(
+    post,
+    path = "/api/v1/reportes",
+    request_body = SolicitudCrearReporte,
+    responses(
+        (status = 201, description = "Reporte registrado", body = RespuestaRegistroReporte),
+        (status = 400, description = "Solicitud inválida", body = crate::docs::RespuestaError),
+        (status = 429, description = "Cooldown activo para el mismo dispositivo y ubicación", body = crate::docs::RespuestaError),
+        (status = 500, description = "Error interno del servidor", body = crate::docs::RespuestaError),
+    )
+)]
 pub async fn crear_reporte(
     State(estado): State<EstadoReportes>,
     solicitud: Result<Json<SolicitudCrearReporte>, JsonRejection>,
@@ -84,6 +106,20 @@ pub async fn crear_reporte(
     ))
 }
 
+/// Consulta el feed de reportes con ventana temporal, bbox y paginación.
+///
+/// Devuelve los reportes ordenados por antigüedad, el total de coincidencias y,
+/// opcionalmente, la agregación por intervalos de horas.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reportes",
+    params(SolicitudConsultarReportes),
+    responses(
+        (status = 200, description = "Consulta de reportes", body = ResultadoConsulta),
+        (status = 400, description = "Consulta inválida", body = crate::docs::RespuestaError),
+        (status = 500, description = "Error interno del servidor", body = crate::docs::RespuestaError),
+    )
+)]
 pub async fn listar_reportes(
     State(estado): State<EstadoReportes>,
     query: Result<Query<SolicitudConsultarReportes>, QueryRejection>,

@@ -3,6 +3,7 @@ use std::fmt;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::modules::reportes::domain::{
     ErrorValidacionConsulta, IntervaloReportes, ReporteConsulta, SolicitudConsultarReportes,
@@ -10,14 +11,20 @@ use crate::modules::reportes::domain::{
 };
 use crate::modules::reportes::infra::PostgresRepositorioReportes;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ResultadoConsulta {
+    /// Reportes que coinciden con la consulta, ordenados por antigüedad.
     pub reportes: Vec<ReporteConsulta>,
+    /// Total de reportes que coinciden con los filtros (ignora `limit`/`offset`).
     pub total: i64,
+    /// Número máximo de reportes solicitados.
     pub limit: u32,
+    /// Número de reportes saltados.
     pub offset: u32,
+    /// Tamaño de intervalo aplicado, presente solo si se solicitó `intervalo_horas`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intervalo_horas: Option<u32>,
+    /// Agregación por intervalos, presente solo si se solicitó `intervalo_horas`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intervalos: Option<Vec<IntervaloReportes>>,
 }

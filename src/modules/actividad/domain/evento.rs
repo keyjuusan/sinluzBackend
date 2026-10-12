@@ -1,15 +1,22 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
 pub const EVENTO_REPORTE_CREADO: &str = "reporte_creado";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct EventoActividad {
+    /// Discriminador del tipo de evento (p. ej. `reporte_creado`).
     pub tipo: String,
+    /// Identificador del reporte que originó el evento.
     pub id: String,
+    /// Latitud del corte en grados decimales (WGS84).
     pub lat: f64,
+    /// Longitud del corte en grados decimales (WGS84).
     pub lng: f64,
+    /// Instante UTC (RFC 3339) de creación del reporte.
     pub creado: String,
+    /// Duración estimada en horas enteras. `null` si no se conoce.
     pub horas_duracion: Option<u16>,
 }
 

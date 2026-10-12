@@ -2,6 +2,7 @@ use std::fmt;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 pub const HORAS_VENTANA_DEFECTO: i64 = 24;
 pub const LIMITE_DEFECTO: u32 = 1000;
@@ -14,18 +15,37 @@ pub const INTERVALO_HORAS_DEFECTO: u32 = 1;
 pub const INTERVALO_HORAS_MAXIMO: u32 = 24;
 pub const MAX_INTERVALOS: i64 = 1000;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
 pub struct SolicitudConsultarReportes {
+    /// Día calendario (`YYYY-MM-DD`) en UTC que acota la consulta a la jornada completa.
+    /// Alternativa a `desde`/`hasta`: son mutuamente excluyentes.
     pub dia: Option<String>,
+    /// Inicio de la ventana temporal (RFC 3339). Por defecto, 24 horas antes de `hasta`.
     pub desde: Option<String>,
+    /// Fin de la ventana temporal (RFC 3339). Por defecto, el instante actual.
     pub hasta: Option<String>,
+    /// Latitud mínima del bbox (WGS84).
+    #[param(value_type = Option<f64>)]
     pub min_lat: Option<String>,
+    /// Latitud máxima del bbox (WGS84).
+    #[param(value_type = Option<f64>)]
     pub max_lat: Option<String>,
+    /// Longitud mínima del bbox (WGS84).
+    #[param(value_type = Option<f64>)]
     pub min_lng: Option<String>,
+    /// Longitud máxima del bbox (WGS84).
+    #[param(value_type = Option<f64>)]
     pub max_lng: Option<String>,
+    /// Número máximo de reportes a devolver (1–5000; por defecto 1000).
+    #[param(value_type = Option<u32>)]
     pub limit: Option<String>,
+    /// Número de reportes a saltar (mayor o igual a 0; por defecto 0).
+    #[param(value_type = Option<u32>)]
     pub offset: Option<String>,
+    /// Tamaño del intervalo de agrupación en horas enteras (1–24).
+    #[param(value_type = Option<u32>)]
     pub intervalo_horas: Option<String>,
 }
 
@@ -45,19 +65,27 @@ pub struct FiltrosConsultaReporte {
     pub intervalo_horas: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ReporteConsulta {
+    /// Identificador del reporte.
     pub id: String,
+    /// Latitud del corte en grados decimales (WGS84).
     pub lat: f64,
+    /// Longitud del corte en grados decimales (WGS84).
     pub lng: f64,
+    /// Instante UTC (RFC 3339) en que el servidor registró el reporte.
     pub creado: DateTime<Utc>,
+    /// Estimación en horas enteras de la duración del corte. `null` si no se conoce.
     pub horas_duracion: Option<u16>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IntervaloReportes {
+    /// Inicio del segmento (RFC 3339).
     pub inicio: DateTime<Utc>,
+    /// Fin del segmento (RFC 3339).
     pub fin: DateTime<Utc>,
+    /// Conteo de reportes dentro del segmento.
     pub total: i64,
 }
 

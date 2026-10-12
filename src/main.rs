@@ -1,5 +1,6 @@
 mod config;
 mod cors;
+mod docs;
 mod modules;
 
 use axum::{Router, http::StatusCode, routing::get};
@@ -9,6 +10,16 @@ use tokio::net::TcpListener;
 use crate::config::Config;
 use crate::cors::capa;
 use crate::modules::actividad::{MAX_CONEXIONES_ACTIVIDAD, infra::CanalActividad};
+
+/// Comprobación de salud del servicio.
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses((status = 200, description = "Servicio saludable"))
+)]
+pub(crate) async fn health() -> StatusCode {
+    StatusCode::OK
+}
 
 #[tokio::main]
 async fn main() {
@@ -46,9 +57,10 @@ async fn main() {
     let canal = CanalActividad::nuevo(MAX_CONEXIONES_ACTIVIDAD);
 
     let app = Router::new()
-        .route("/api/health", get(|| async { StatusCode::OK }))
+        .route("/api/health", get(health))
         .merge(modules::reportes::routes::router(pool, canal.clone()))
         .merge(modules::actividad::routes::router(canal))
+        .merge(docs::router_opcional(config.docs_habilitado))
         .layer(capa(config.cors_allowed_origin.clone()));
 
     println!("Servidor iniciado en: http://{host}");

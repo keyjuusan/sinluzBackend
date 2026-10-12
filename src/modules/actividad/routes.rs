@@ -18,6 +18,22 @@ pub fn router(canal: CanalActividad) -> Router {
         .with_state(canal)
 }
 
+/// Handshake del canal de actividad en tiempo real (WebSocket).
+///
+/// Tras el upgrade (`101 Switching Protocols`), el servidor emite eventos
+/// `reporte_creado` (`EventoActividad`) a todas las conexiones activas cada vez
+/// que se registra un reporte. El canal es de solo lectura: el cliente no envía
+/// mensajes de negocio. El servidor hace ping cada 30 s y cierra a los 60 s sin
+/// actividad.
+#[utoipa::path(
+    get,
+    path = "/api/v1/actividad/ws",
+    responses(
+        (status = 101, description = "Cambio de protocolo a WebSocket (OpenAPI no modela el protocolo WS)"),
+        (status = 429, description = "Límite de conexiones de actividad alcanzado", body = crate::docs::RespuestaError),
+        (status = 500, description = "Error interno del servidor", body = crate::docs::RespuestaError),
+    )
+)]
 pub async fn conectar(
     State(canal): State<CanalActividad>,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,

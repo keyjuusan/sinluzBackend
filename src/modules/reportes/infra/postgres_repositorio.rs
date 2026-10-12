@@ -1,7 +1,9 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
-use crate::modules::reportes::domain::{FiltrosConsultaReporte, Reporte, ReporteConsulta};
+use crate::modules::reportes::domain::{
+    FiltrosConsultaReporte, IntervaloReportes, Reporte, ReporteConsulta,
+};
 
 pub const UMBRAL_COINCIDENCIA_GRADOS: f64 = 0.001;
 
@@ -136,5 +138,44 @@ impl PostgresRepositorioReportes {
         .fetch_one(&self.pool)
         .await?;
         Ok(total)
+    }
+
+    pub async fn contar_reportes_por_intervalo(
+        &self,
+        filtros: &FiltrosConsultaReporte,
+        intervalo_horas: u32,
+    ) -> Result<Vec<IntervaloReportes>, sqlx::Error> {
+        let bbox = filtros.bbox.as_ref();
+        let filas: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
+            "SELECT date_bin(make_interval(hours => $7::int), creado, $1::timestamptz) AS inicio,
+                    count(*)::bigint AS total
+             FROM reportes
+             WHERE creado >= $1
+               AND creado < $2
+               AND ($3::float8 IS NULL OR lat >= $3)
+               AND ($4::float8 IS NULL OR lat <= $4)
+               AND ($5::float8 IS NULL OR lng >= $5)
+               AND ($6::float8 IS NULL OR lng <= $6)
+             GROUP BY inicio
+             ORDER BY inicio ASC",
+        )
+        .bind(filtros.desde)
+        .bind(filtros.hasta)
+        .bind(bbox.map(|b| b.min_lat))
+        .bind(bbox.map(|b| b.max_lat))
+        .bind(bbox.map(|b| b.min_lng))
+        .bind(bbox.map(|b| b.max_lng))
+        .bind(intervalo_horas as i32)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(filas
+            .into_iter()
+            .map(|(inicio, total)| IntervaloReportes {
+                inicio,
+                fin: inicio + Duration::hours(i64::from(intervalo_horas)),
+                total,
+            })
+            .collect())
     }
 }

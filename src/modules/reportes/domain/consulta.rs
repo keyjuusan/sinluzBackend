@@ -10,6 +10,9 @@ pub const MIN_LAT: f64 = -90.0;
 pub const MAX_LAT: f64 = 90.0;
 pub const MIN_LNG: f64 = -180.0;
 pub const MAX_LNG: f64 = 180.0;
+pub const INTERVALO_HORAS_DEFECTO: u32 = 1;
+pub const INTERVALO_HORAS_MAXIMO: u32 = 24;
+pub const MAX_INTERVALOS: i64 = 1000;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +25,7 @@ pub struct SolicitudConsultarReportes {
     pub max_lng: Option<String>,
     pub limit: Option<String>,
     pub offset: Option<String>,
+    pub intervalo_horas: Option<String>,
 }
 
 pub struct Bbox {
@@ -37,6 +41,7 @@ pub struct FiltrosConsultaReporte {
     pub bbox: Option<Bbox>,
     pub limit: u32,
     pub offset: u32,
+    pub intervalo_horas: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +51,13 @@ pub struct ReporteConsulta {
     pub lng: f64,
     pub creado: DateTime<Utc>,
     pub horas_duracion: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IntervaloReportes {
+    pub inicio: DateTime<Utc>,
+    pub fin: DateTime<Utc>,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +72,7 @@ pub enum ErrorValidacionConsulta {
     BboxLongitudFueraDeRango,
     LimitInvalido,
     OffsetInvalido,
+    IntervaloInvalido(&'static str),
 }
 
 impl fmt::Display for ErrorValidacionConsulta {
@@ -101,6 +114,7 @@ impl fmt::Display for ErrorValidacionConsulta {
             ErrorValidacionConsulta::OffsetInvalido => {
                 write!(f, "offset inválido: debe ser un entero mayor o igual a 0")
             }
+            ErrorValidacionConsulta::IntervaloInvalido(mensaje) => write!(f, "{mensaje}"),
         }
     }
 }
@@ -136,6 +150,8 @@ pub fn construir_filtros(
         |_| true,
         ErrorValidacionConsulta::OffsetInvalido,
     )?;
+    let intervalo_horas =
+        parse_intervalo_horas(solicitud.intervalo_horas.as_deref(), desde, hasta)?;
 
     Ok(FiltrosConsultaReporte {
         desde,
@@ -143,6 +159,7 @@ pub fn construir_filtros(
         bbox,
         limit,
         offset,
+        intervalo_horas,
     })
 }
 
@@ -169,6 +186,44 @@ fn parse_u32(
             }
         }
     }
+}
+
+fn parse_intervalo_horas(
+    valor: Option<&str>,
+    desde: DateTime<Utc>,
+    hasta: DateTime<Utc>,
+) -> Result<Option<u32>, ErrorValidacionConsulta> {
+    let intervalo = match valor {
+        None => return Ok(None),
+        Some("") => INTERVALO_HORAS_DEFECTO,
+        Some(texto) => {
+            let numero = texto
+                .parse::<u32>()
+                .map_err(|_| error_intervalo_fuera_de_rango())?;
+            if !(INTERVALO_HORAS_DEFECTO..=INTERVALO_HORAS_MAXIMO).contains(&numero) {
+                return Err(error_intervalo_fuera_de_rango());
+            }
+            numero
+        }
+    };
+
+    if segmentos_de_intervalo(desde, hasta, intervalo) > MAX_INTERVALOS {
+        return Err(ErrorValidacionConsulta::IntervaloInvalido(
+            "intervalo_horas inválido: la ventana y el intervalo producen más de 1000 segmentos",
+        ));
+    }
+
+    Ok(Some(intervalo))
+}
+
+fn error_intervalo_fuera_de_rango() -> ErrorValidacionConsulta {
+    ErrorValidacionConsulta::IntervaloInvalido("intervalo_horas inválido: debe estar entre 1 y 24")
+}
+
+fn segmentos_de_intervalo(desde: DateTime<Utc>, hasta: DateTime<Utc>, intervalo_horas: u32) -> i64 {
+    let total_segundos = (hasta - desde).num_seconds();
+    let paso_segundos = i64::from(intervalo_horas) * 3600;
+    (total_segundos + paso_segundos - 1) / paso_segundos
 }
 
 fn construir_bbox(

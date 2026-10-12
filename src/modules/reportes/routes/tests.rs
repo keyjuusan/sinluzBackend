@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use http_body_util::BodyExt;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -715,6 +715,14 @@ fn parse_instante(texto: &str) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
+fn medianoche(dia: &str) -> DateTime<Utc> {
+    NaiveDate::parse_from_str(dia, "%Y-%m-%d")
+        .expect("día inválido")
+        .and_hms_opt(0, 0, 0)
+        .expect("medianoche válida")
+        .and_utc()
+}
+
 fn intervalos_de(respuesta: &serde_json::Value) -> Vec<(DateTime<Utc>, DateTime<Utc>, i64)> {
     respuesta["intervalos"]
         .as_array()
@@ -1006,4 +1014,198 @@ async fn acepta_ventana_de_exactamente_mil_segmentos() {
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
     assert_eq!(intervalos_de(&respuesta).len(), 1000);
+}
+
+#[tokio::test]
+async fn filtra_por_dia_calendario() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 5.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (5.0 + corte, 5.0 + corte);
+    let inicio = medianoche("2026-03-15");
+
+    let id_temprano =
+        insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(5)).await;
+    let id_tardio = insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(23)).await;
+    let id_antes = insertar_reporte(&pool, base_lat, base_lng, inicio - Duration::seconds(1)).await;
+    let id_despues = insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::days(1)).await;
+
+    let query = format!("?dia=2026-03-15&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    let ids = ids_de(&respuesta);
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    assert_eq!(ids.len(), 2, "body: {body}");
+    assert!(ids.contains(&id_temprano) && ids.contains(&id_tardio));
+    assert!(!ids.contains(&id_antes) && !ids.contains(&id_despues));
+}
+
+#[tokio::test]
+async fn dia_incluye_el_inicio_y_excluye_el_fin() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 15.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (15.0 + corte, 15.0 + corte);
+    let inicio = medianoche("2026-04-10");
+
+    let id_inicio = insertar_reporte(&pool, base_lat, base_lng, inicio).await;
+    let id_fin = insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::days(1)).await;
+
+    let query = format!("?dia=2026-04-10&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_inicio], "body: {body}");
+    assert!(!ids.contains(&id_fin));
+    assert_eq!(respuesta["total"].as_i64(), Some(1));
+}
+
+#[tokio::test]
+async fn dia_se_combina_con_bbox() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 25.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (25.0 + corte, 25.0 + corte);
+    let inicio = medianoche("2026-05-20");
+
+    let id_dentro = insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(12)).await;
+    let id_fuera = insertar_reporte(
+        &pool,
+        base_lat + 1.0,
+        base_lng + 1.0,
+        inicio + Duration::hours(12),
+    )
+    .await;
+
+    let query = format!("?dia=2026-05-20&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dentro], "body: {body}");
+    assert!(!ids.contains(&id_fuera));
+    assert_eq!(respuesta["total"].as_i64(), Some(1));
+}
+
+#[tokio::test]
+async fn dia_pagina_con_limit_y_offset() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 35.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (35.0 + corte, 35.0 + corte);
+    let inicio = medianoche("2026-06-01");
+
+    let mut ids = Vec::new();
+    for horas in 1..=3 {
+        ids.push(
+            insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(horas)).await,
+        );
+    }
+
+    let bbox = bbox_query(base_lat, base_lng);
+    let (status, body) =
+        get_reportes(&app, &format!("?dia=2026-06-01&{bbox}&limit=2&offset=0")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3));
+    let primera = ids_de(&respuesta);
+    assert_eq!(primera.len(), 2, "body: {body}");
+
+    let (status, body) =
+        get_reportes(&app, &format!("?dia=2026-06-01&{bbox}&limit=2&offset=2")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3));
+    let segunda = ids_de(&respuesta);
+    assert_eq!(segunda, vec![ids[0].clone()], "body: {body}");
+    assert!(primera.iter().all(|id| !segunda.contains(id)));
+}
+
+#[tokio::test]
+async fn dia_con_intervalo_horas_genera_la_serie_del_dia() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 55.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (55.0 + corte, 55.0 + corte);
+    let inicio = medianoche("2026-07-08");
+
+    insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::minutes(10)).await;
+    insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(5)).await;
+    insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        inicio + Duration::hours(23) + Duration::minutes(59),
+    )
+    .await;
+
+    let query = format!(
+        "?dia=2026-07-08&{}&intervalo_horas=1",
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["intervalo_horas"].as_u64(), Some(1));
+    assert_eq!(respuesta["total"].as_i64(), Some(3));
+
+    let intervalos = intervalos_de(&respuesta);
+    assert_eq!(intervalos.len(), 24, "body: {body}");
+    assert_eq!(intervalos[0].0, inicio);
+    assert_eq!(intervalos[23].1, inicio + Duration::days(1));
+    let suma: i64 = intervalos.iter().map(|(_, _, total)| *total).sum();
+    assert_eq!(Some(suma), respuesta["total"].as_i64());
+}
+
+#[tokio::test]
+async fn dia_sin_reportes_devuelve_lista_vacia() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 65.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (65.0 + corte, 65.0 + corte);
+
+    let query = format!("?dia=2001-01-01&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["reportes"].as_array().map(Vec::len), Some(0));
+    assert_eq!(respuesta["total"].as_i64(), Some(0));
+}
+
+#[tokio::test]
+async fn rechaza_dia_malformado() {
+    let (_, app) = aplicacion().await;
+    for valor in [
+        "no-es-fecha",
+        "2026-13-01",
+        "2026-02-30",
+        "2026-10-05T00:00:00Z",
+        "",
+    ] {
+        let (status, body) = get_reportes(&app, &format!("?dia={valor}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "valor {valor}: {body}");
+        assert!(body.contains("dia"), "valor {valor}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn rechaza_dia_incompatible_con_ventana() {
+    let (_, app) = aplicacion().await;
+
+    let (status, body) = get_reportes(&app, "?dia=2026-10-05&desde=2026-10-04T00:00:00Z").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("dia no es compatible"), "body: {body}");
+
+    let (status, body) = get_reportes(&app, "?dia=2026-10-05&hasta=2026-10-06T00:00:00Z").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("dia no es compatible"), "body: {body}");
+}
+
+#[tokio::test]
+async fn rechaza_dia_con_parametro_desconocido() {
+    let (_, app) = aplicacion().await;
+    let (status, _) = get_reportes(&app, "?dia=2026-10-05&foo=1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -59,5 +59,6 @@ Directrices técnicas de alto nivel para mantener la consistencia en todo el rep
 - [ ] Autenticación y autorización de usuarios.
 - [x] Feed de datos para el heatmap del cliente — spec `approved/02_consultar_reportes.md`: `GET /api/v1/reportes` con ventana temporal, bbox opcional y paginación `limit`/`offset`.
 - [x] Actividad en tiempo real — spec `approved/03_websocket_actividad.md`: `GET /api/v1/actividad/ws` emite `reporte_creado` al crear un reporte; 100 conexiones máx. (429), keepalive ping 30 s / inactividad 60 s, sin `id_usuario`.
+- [x] Filtro del feed por día calendario — spec `approved/06_filtro_por_dia.md`: `GET /api/v1/reportes?dia=YYYY-MM-DD` como alternativa opt-in a `desde`/`hasta` (jornada UTC `[dia 00:00, dia+1 00:00)`), combinable con bbox, paginación e `intervalo_horas`.
 - [ ] Scaffolding del cliente (no existe `package.json`).
 - [ ] Offline de la PWA (registro de reportes sin conexión).

@@ -10,6 +10,7 @@ Terminología acordada para nombrar variables, funciones, rutas y tablas de base
 - **cooldown:** medida anti-spam. Un mismo `id_usuario` no puede reportar la misma ubicación (±~100 m) más de una vez cada 15 minutos.
 - **feed / consulta de reportes:** lectura de reportes registrados que alimenta el heatmap del cliente. Expuesta por `GET /api/v1/reportes`.
 - **ventana temporal:** rango `desde`–`hasta` (RFC 3339) que acota la consulta del feed por el campo `creado`.
+- **día calendario (`dia`):** query param opt-in del feed (`YYYY-MM-DD`) que acota la consulta a la jornada completa en UTC, ventana semiabierta `[dia 00:00:00Z, (dia+1) 00:00:00Z)`. Alternativa a `desde`/`hasta`: son mutuamente excluyentes.
 - **bbox:** rectángulo geográfico de filtrado definido por `min_lat`, `max_lat`, `min_lng`, `max_lng` (WGS84), opcional en la consulta del feed.
 - **actividad:** reflejo en tiempo real de la actividad de otros usuarios (hoy: reportes recién registrados) hacia los clientes conectados. Expuesta por el canal WebSocket `GET /api/v1/actividad/ws`.
 - **evento de actividad:** mensaje JSON emitido por el servidor por cada actividad relevante. Clave `tipo` (discriminador, p. ej. `reporte_creado`) + datos del hecho; nunca incluye `id_usuario`.

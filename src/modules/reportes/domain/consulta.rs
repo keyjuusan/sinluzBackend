@@ -1,6 +1,6 @@
 use std::fmt;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const HORAS_VENTANA_DEFECTO: i64 = 24;
@@ -17,6 +17,7 @@ pub const MAX_INTERVALOS: i64 = 1000;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolicitudConsultarReportes {
+    pub dia: Option<String>,
     pub desde: Option<String>,
     pub hasta: Option<String>,
     pub min_lat: Option<String>,
@@ -73,6 +74,8 @@ pub enum ErrorValidacionConsulta {
     LimitInvalido,
     OffsetInvalido,
     IntervaloInvalido(&'static str),
+    DiaInvalido,
+    DiaIncompatible,
 }
 
 impl fmt::Display for ErrorValidacionConsulta {
@@ -115,6 +118,12 @@ impl fmt::Display for ErrorValidacionConsulta {
                 write!(f, "offset inválido: debe ser un entero mayor o igual a 0")
             }
             ErrorValidacionConsulta::IntervaloInvalido(mensaje) => write!(f, "{mensaje}"),
+            ErrorValidacionConsulta::DiaInvalido => {
+                write!(f, "dia inválido: debe ser una fecha en formato YYYY-MM-DD")
+            }
+            ErrorValidacionConsulta::DiaIncompatible => {
+                write!(f, "dia no es compatible con desde/hasta")
+            }
         }
     }
 }
@@ -124,18 +133,7 @@ impl std::error::Error for ErrorValidacionConsulta {}
 pub fn construir_filtros(
     solicitud: &SolicitudConsultarReportes,
 ) -> Result<FiltrosConsultaReporte, ErrorValidacionConsulta> {
-    let ahora = Utc::now();
-    let hasta = match solicitud.hasta.as_deref() {
-        Some(texto) => parse_fecha(texto).ok_or(ErrorValidacionConsulta::HastaInvalida)?,
-        None => ahora,
-    };
-    let desde = match solicitud.desde.as_deref() {
-        Some(texto) => parse_fecha(texto).ok_or(ErrorValidacionConsulta::DesdeInvalida)?,
-        None => hasta - Duration::hours(HORAS_VENTANA_DEFECTO),
-    };
-    if desde >= hasta {
-        return Err(ErrorValidacionConsulta::VentanaInvalida);
-    }
+    let (desde, hasta) = resolver_ventana(solicitud)?;
 
     let bbox = construir_bbox(solicitud)?;
     let limit = parse_u32(
@@ -161,6 +159,42 @@ pub fn construir_filtros(
         offset,
         intervalo_horas,
     })
+}
+
+fn resolver_ventana(
+    solicitud: &SolicitudConsultarReportes,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ErrorValidacionConsulta> {
+    if let Some(texto) = solicitud.dia.as_deref() {
+        if solicitud.desde.is_some() || solicitud.hasta.is_some() {
+            return Err(ErrorValidacionConsulta::DiaIncompatible);
+        }
+        return parse_dia(texto);
+    }
+
+    let ahora = Utc::now();
+    let hasta = match solicitud.hasta.as_deref() {
+        Some(texto) => parse_fecha(texto).ok_or(ErrorValidacionConsulta::HastaInvalida)?,
+        None => ahora,
+    };
+    let desde = match solicitud.desde.as_deref() {
+        Some(texto) => parse_fecha(texto).ok_or(ErrorValidacionConsulta::DesdeInvalida)?,
+        None => hasta - Duration::hours(HORAS_VENTANA_DEFECTO),
+    };
+    if desde >= hasta {
+        return Err(ErrorValidacionConsulta::VentanaInvalida);
+    }
+    Ok((desde, hasta))
+}
+
+pub fn parse_dia(texto: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), ErrorValidacionConsulta> {
+    let fecha = NaiveDate::parse_from_str(texto, "%Y-%m-%d")
+        .map_err(|_| ErrorValidacionConsulta::DiaInvalido)?;
+    let inicio = fecha
+        .and_hms_opt(0, 0, 0)
+        .ok_or(ErrorValidacionConsulta::DiaInvalido)?
+        .and_utc();
+    let fin = inicio + Duration::days(1);
+    Ok((inicio, fin))
 }
 
 fn parse_fecha(texto: &str) -> Option<DateTime<Utc>> {

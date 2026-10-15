@@ -106,10 +106,9 @@ pub async fn crear_reporte(
     ))
 }
 
-/// Consulta el feed de reportes con ventana temporal, bbox y paginación.
+/// Consulta el feed de reportes con ventana temporal, bbox, hora del día y paginación.
 ///
-/// Devuelve los reportes ordenados por antigüedad, el total de coincidencias y,
-/// opcionalmente, la agregación por intervalos de horas.
+/// Devuelve los reportes ordenados por antigüedad y el total de coincidencias.
 #[utoipa::path(
     get,
     path = "/api/v1/reportes",

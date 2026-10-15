@@ -691,10 +691,6 @@ async fn rechaza_parametro_desconocido() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-fn truncar_a_segundos(instante: DateTime<Utc>) -> DateTime<Utc> {
-    DateTime::from_timestamp(instante.timestamp(), 0).expect("timestamp válido")
-}
-
 fn instante_query(instante: DateTime<Utc>) -> String {
     instante.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -709,12 +705,6 @@ fn bbox_query(base_lat: f64, base_lng: f64) -> String {
     )
 }
 
-fn parse_instante(texto: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(texto)
-        .expect("instante inválido")
-        .with_timezone(&Utc)
-}
-
 fn medianoche(dia: &str) -> DateTime<Utc> {
     NaiveDate::parse_from_str(dia, "%Y-%m-%d")
         .expect("día inválido")
@@ -723,174 +713,131 @@ fn medianoche(dia: &str) -> DateTime<Utc> {
         .and_utc()
 }
 
-fn intervalos_de(respuesta: &serde_json::Value) -> Vec<(DateTime<Utc>, DateTime<Utc>, i64)> {
-    respuesta["intervalos"]
-        .as_array()
-        .expect("falta intervalos")
-        .iter()
-        .map(|segmento| {
-            (
-                parse_instante(segmento["inicio"].as_str().expect("falta inicio")),
-                parse_instante(segmento["fin"].as_str().expect("falta fin")),
-                segmento["total"].as_i64().expect("falta total"),
-            )
-        })
-        .collect()
-}
-
 #[tokio::test]
-async fn agrega_intervalos_horarios_incluyendo_segmentos_vacios() {
+async fn hora_filtra_la_franja_entre_esa_hora_y_la_siguiente() {
     let (pool, app) = aplicacion().await;
     limpiar_banda(&pool, 60.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (60.0 + corte, 60.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(3));
-    let hasta = desde + Duration::hours(3);
+    let base = medianoche("2026-03-15") + Duration::hours(13);
 
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(10)).await;
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(20)).await;
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(150)).await;
-
-    let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=1",
-        instante_query(desde),
-        instante_query(hasta),
-        bbox_query(base_lat, base_lng)
-    );
-    let (status, body) = get_reportes(&app, &query).await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["intervalo_horas"].as_u64(), Some(1));
-    assert_eq!(respuesta["total"].as_i64(), Some(3));
-
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 3, "body: {body}");
-    let totales: Vec<i64> = intervalos.iter().map(|(_, _, total)| *total).collect();
-    assert_eq!(totales, vec![2, 0, 1]);
-    assert_eq!(intervalos[0].0, desde, "primer inicio debe ser desde");
-    assert_eq!(intervalos[2].1, hasta, "último fin debe ser hasta");
-    for par in intervalos.windows(2) {
-        assert_eq!(par[0].1, par[1].0, "los segmentos deben ser contiguos");
-    }
-    assert_eq!(Some(totales.iter().sum()), respuesta["total"].as_i64());
-}
-
-#[tokio::test]
-async fn agrupa_reportes_en_segmentos_de_tres_horas() {
-    let (pool, app) = aplicacion().await;
-    limpiar_banda(&pool, 70.0).await;
-    let corte = coordenada_unica();
-    let (base_lat, base_lng) = (70.0 + corte, 70.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(6));
-    let hasta = desde + Duration::hours(6);
-
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::hours(1)).await;
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(150)).await;
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::hours(4)).await;
-
-    let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=3",
-        instante_query(desde),
-        instante_query(hasta),
-        bbox_query(base_lat, base_lng)
-    );
-    let (status, body) = get_reportes(&app, &query).await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["intervalo_horas"].as_u64(), Some(3));
-    assert_eq!(respuesta["total"].as_i64(), Some(3));
-
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 2, "body: {body}");
-    let totales: Vec<i64> = intervalos.iter().map(|(_, _, total)| *total).collect();
-    assert_eq!(totales, vec![2, 1]);
-    assert_eq!(intervalos[0].0, desde);
-    assert_eq!(intervalos[0].1, desde + Duration::hours(3));
-    assert_eq!(intervalos[1].1, hasta);
-}
-
-#[tokio::test]
-async fn agrega_intervalos_respetando_el_bbox() {
-    let (pool, app) = aplicacion().await;
-    limpiar_banda(&pool, 80.0).await;
-    let corte = coordenada_unica();
-    let (base_lat, base_lng) = (80.0 + corte, 80.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(2));
-    let hasta = desde + Duration::hours(2);
-
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(30)).await;
-    insertar_reporte(
+    let id_antes = insertar_reporte(
         &pool,
-        base_lat + 1.0,
-        base_lng + 1.0,
-        desde + Duration::minutes(30),
+        base_lat,
+        base_lng,
+        base + Duration::hours(1) - Duration::seconds(1),
     )
     .await;
+    let id_inicio = insertar_reporte(&pool, base_lat, base_lng, base + Duration::hours(1)).await;
+    let id_ultimo = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        base + Duration::hours(2) - Duration::seconds(1),
+    )
+    .await;
+    let id_fin = insertar_reporte(&pool, base_lat, base_lng, base + Duration::hours(2)).await;
 
     let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=1",
-        instante_query(desde),
-        instante_query(hasta),
+        "?desde={}&hasta={}&{}&hora=14",
+        instante_query(base),
+        instante_query(base + Duration::hours(3)),
         bbox_query(base_lat, base_lng)
     );
     let (status, body) = get_reportes(&app, &query).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["total"].as_i64(), Some(1));
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(
-        intervalos.iter().map(|(_, _, total)| *total).sum::<i64>(),
-        1
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_ultimo, id_inicio], "body: {body}");
+    assert!(
+        !ids.contains(&id_antes) && !ids.contains(&id_fin),
+        "13:59:59 y 15:00:00 deben quedar fuera: {body}"
     );
-    assert_eq!(intervalos[0].2, 1, "el reporte cae en el primer segmento");
-}
-
-#[tokio::test]
-async fn intervalo_horas_vacio_usa_el_valor_por_defecto() {
-    let (_, app) = aplicacion().await;
-    let corte = coordenada_unica();
-    let (base_lat, base_lng) = (-50.0 + corte, -50.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(2));
-    let hasta = desde + Duration::hours(2);
-
-    let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=",
-        instante_query(desde),
-        instante_query(hasta),
-        bbox_query(base_lat, base_lng)
-    );
-    let (status, body) = get_reportes(&app, &query).await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["intervalo_horas"].as_u64(), Some(1));
-    assert_eq!(intervalos_de(&respuesta).len(), 2);
-}
-
-#[tokio::test]
-async fn sin_intervalo_horas_omite_las_claves_de_agregacion() {
-    let (_, app) = aplicacion().await;
-    let corte = coordenada_unica();
-    let (base_lat, base_lng) = (-55.0 + corte, -55.0 + corte);
-
-    let query = format!("?{}", bbox_query(base_lat, base_lng));
-    let (status, body) = get_reportes(&app, &query).await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
     assert!(respuesta.get("intervalos").is_none(), "body: {body}");
     assert!(respuesta.get("intervalo_horas").is_none(), "body: {body}");
 }
 
 #[tokio::test]
-async fn ventana_sin_reportes_genera_serie_completa_de_ceros() {
+async fn hora_se_repite_en_cada_dia_de_la_ventana() {
     let (pool, app) = aplicacion().await;
-    limpiar_banda(&pool, -60.0).await;
+    limpiar_banda(&pool, 70.0).await;
     let corte = coordenada_unica();
-    let (base_lat, base_lng) = (-60.0 + corte, -60.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(3));
-    let hasta = desde + Duration::hours(3);
+    let (base_lat, base_lng) = (70.0 + corte, 70.0 + corte);
+
+    let id_dia1 = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-05-01") + Duration::hours(14) + Duration::minutes(30),
+    )
+    .await;
+    let id_dia2 = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-05-02") + Duration::hours(14) + Duration::minutes(30),
+    )
+    .await;
+    let id_hora_fuera = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-05-02") + Duration::hours(15) + Duration::minutes(30),
+    )
+    .await;
+    let id_anterior = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-05-02") + Duration::hours(13) + Duration::minutes(30),
+    )
+    .await;
+    let id_fuera_ventana = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-05-03") + Duration::hours(14) + Duration::minutes(30),
+    )
+    .await;
 
     let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=1",
+        "?desde={}&hasta={}&{}&hora=14",
+        instante_query(medianoche("2026-05-01") + Duration::hours(10)),
+        instante_query(medianoche("2026-05-03") + Duration::hours(14)),
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dia2, id_dia1], "body: {body}");
+    assert!(
+        !ids.contains(&id_hora_fuera) && !ids.contains(&id_anterior),
+        "solo debe entrar la franja 14:00–15:00: {body}"
+    );
+    assert!(!ids.contains(&id_fuera_ventana), "body: {body}");
+}
+
+#[tokio::test]
+async fn hora_se_recorta_con_la_ventana_multidia_parcial() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, 80.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (80.0 + corte, 80.0 + corte);
+    let desde = medianoche("2026-06-10") + Duration::hours(14) + Duration::minutes(30);
+    let hasta = medianoche("2026-06-11") + Duration::hours(14) + Duration::minutes(30);
+
+    let id_dia1 = insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(15)).await;
+    let id_dia2 = insertar_reporte(&pool, base_lat, base_lng, hasta - Duration::minutes(15)).await;
+    let id_antes_ventana =
+        insertar_reporte(&pool, base_lat, base_lng, desde - Duration::minutes(15)).await;
+    let id_despues_ventana =
+        insertar_reporte(&pool, base_lat, base_lng, hasta + Duration::minutes(15)).await;
+
+    let query = format!(
+        "?desde={}&hasta={}&{}&hora=14",
         instante_query(desde),
         instante_query(hasta),
         bbox_query(base_lat, base_lng)
@@ -898,72 +845,195 @@ async fn ventana_sin_reportes_genera_serie_completa_de_ceros() {
     let (status, body) = get_reportes(&app, &query).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["total"].as_i64(), Some(0));
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 3);
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dia2, id_dia1], "body: {body}");
     assert!(
-        intervalos.iter().all(|(_, _, total)| *total == 0),
-        "body: {body}"
+        !ids.contains(&id_antes_ventana) && !ids.contains(&id_despues_ventana),
+        "la franja debe recortarse a la ventana: {body}"
     );
-    assert_eq!(intervalos[0].0, desde);
-    assert_eq!(intervalos[2].1, hasta);
 }
 
 #[tokio::test]
-async fn ultimo_intervalo_se_recorta_a_hasta() {
+async fn hora_se_combina_con_bbox() {
     let (pool, app) = aplicacion().await;
-    limpiar_banda(&pool, -70.0).await;
+    limpiar_banda(&pool, -55.0).await;
     let corte = coordenada_unica();
-    let (base_lat, base_lng) = (-70.0 + corte, -70.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(5));
-    let hasta = desde + Duration::hours(5);
+    let (base_lat, base_lng) = (-55.0 + corte, -55.0 + corte);
+    let desde = medianoche("2026-08-01");
+    let hasta = desde + Duration::days(1);
+
+    let id_dentro = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        desde + Duration::hours(12) + Duration::minutes(30),
+    )
+    .await;
+    let id_fuera_bbox = insertar_reporte(
+        &pool,
+        base_lat + 1.0,
+        base_lng + 1.0,
+        desde + Duration::hours(12) + Duration::minutes(30),
+    )
+    .await;
+    let id_hora_fuera = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        desde + Duration::hours(11) + Duration::minutes(30),
+    )
+    .await;
+
+    let query = format!(
+        "?desde={}&hasta={}&{}&hora=12",
+        instante_query(desde),
+        instante_query(hasta),
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(1), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dentro], "body: {body}");
+    assert!(
+        !ids.contains(&id_fuera_bbox) && !ids.contains(&id_hora_fuera),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn hora_pagina_con_limit_y_offset() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, -60.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-60.0 + corte, -60.0 + corte);
+    let desde = medianoche("2026-09-01") + Duration::hours(13);
+    let hasta = desde + Duration::hours(3);
+
+    let mut ids_franja = Vec::new();
+    for minutos in [10, 20, 30] {
+        ids_franja.push(
+            insertar_reporte(
+                &pool,
+                base_lat,
+                base_lng,
+                desde + Duration::minutes(70 + minutos),
+            )
+            .await,
+        );
+    }
+    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(10)).await;
+    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::minutes(130)).await;
+    ids_franja.reverse();
+
+    let base_query = format!(
+        "?desde={}&hasta={}&{}&hora=14",
+        instante_query(desde),
+        instante_query(hasta),
+        bbox_query(base_lat, base_lng)
+    );
+
+    let (status, body) = get_reportes(&app, &format!("{base_query}&limit=2&offset=0")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3), "body: {body}");
+    let primera = ids_de(&respuesta);
+    assert_eq!(primera, ids_franja[..2].to_vec(), "body: {body}");
+
+    let (status, body) = get_reportes(&app, &format!("{base_query}&limit=2&offset=2")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3), "body: {body}");
+    let segunda = ids_de(&respuesta);
+    assert_eq!(segunda, vec![ids_franja[2].clone()], "body: {body}");
+    assert!(primera.iter().all(|id| !segunda.contains(id)));
+}
+
+#[tokio::test]
+async fn franja_sin_reportes_devuelve_lista_vacia() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, -50.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-50.0 + corte, -50.0 + corte);
 
     insertar_reporte(
         &pool,
         base_lat,
         base_lng,
-        desde + Duration::hours(4) + Duration::minutes(30),
+        medianoche("2026-09-15") + Duration::hours(10) + Duration::minutes(30),
     )
     .await;
 
     let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=2",
-        instante_query(desde),
-        instante_query(hasta),
+        "?desde=2026-09-15T14:00:00Z&hasta=2026-09-15T15:00:00Z&{}&hora=14",
         bbox_query(base_lat, base_lng)
     );
     let (status, body) = get_reportes(&app, &query).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 3, "body: {body}");
-    assert_eq!(intervalos[0].0, desde);
-    assert_eq!(intervalos[1].0, desde + Duration::hours(2));
-    assert_eq!(intervalos[2].0, desde + Duration::hours(4));
-    assert_eq!(intervalos[2].1, hasta);
+    assert_eq!(respuesta["reportes"].as_array().map(Vec::len), Some(0));
+    assert_eq!(respuesta["total"].as_i64(), Some(0), "body: {body}");
+    assert!(respuesta.get("intervalos").is_none(), "body: {body}");
+}
+
+#[tokio::test]
+async fn sin_hora_la_respuesta_solo_tiene_las_claves_de_la_spec_02() {
+    let (_, app) = aplicacion().await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-45.0 + corte, -45.0 + corte);
+
+    let query = format!("?{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    let claves: Vec<&str> = respuesta
+        .as_object()
+        .expect("body no es objeto")
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert_eq!(
-        intervalos
-            .iter()
-            .map(|(_, _, total)| *total)
-            .collect::<Vec<_>>(),
-        vec![0, 0, 1]
+        claves,
+        ["limit", "offset", "reportes", "total"],
+        "body: {body}"
     );
 }
 
 #[tokio::test]
-async fn intervalos_cubren_la_ventana_ignorando_limit_y_offset() {
+async fn hora_cero_es_valido_y_cubre_la_medianoche() {
     let (pool, app) = aplicacion().await;
     limpiar_banda(&pool, -65.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-65.0 + corte, -65.0 + corte);
-    let desde = truncar_a_segundos(Utc::now() - Duration::hours(8));
-    let hasta = desde + Duration::hours(8);
+    let desde = medianoche("2026-04-09");
+    let hasta = desde + Duration::days(2);
 
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::hours(1)).await;
-    insertar_reporte(&pool, base_lat, base_lng, desde + Duration::hours(5)).await;
+    let id_dentro = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-10") + Duration::minutes(30),
+    )
+    .await;
+    let id_una_hora = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-10") + Duration::hours(1) + Duration::minutes(30),
+    )
+    .await;
+    let id_antes = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-09") + Duration::hours(23) + Duration::minutes(30),
+    )
+    .await;
 
     let query = format!(
-        "?desde={}&hasta={}&{}&intervalo_horas=4&limit=1&offset=1",
+        "?desde={}&hasta={}&{}&hora=0",
         instante_query(desde),
         instante_query(hasta),
         bbox_query(base_lat, base_lng)
@@ -971,49 +1041,87 @@ async fn intervalos_cubren_la_ventana_ignorando_limit_y_offset() {
     let (status, body) = get_reportes(&app, &query).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["total"].as_i64(), Some(2));
-    assert_eq!(respuesta["reportes"].as_array().map(Vec::len), Some(1));
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 2, "body: {body}");
-    assert_eq!(
-        intervalos.iter().map(|(_, _, total)| *total).sum::<i64>(),
-        2
+    assert_eq!(respuesta["total"].as_i64(), Some(1), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dentro], "body: {body}");
+    assert!(
+        !ids.contains(&id_una_hora) && !ids.contains(&id_antes),
+        "body: {body}"
     );
 }
 
 #[tokio::test]
-async fn rechaza_intervalo_horas_invalido() {
+async fn hora_23_es_valido_y_llega_hasta_el_cambio_de_dia() {
+    let (pool, app) = aplicacion().await;
+    limpiar_banda(&pool, -70.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-70.0 + corte, -70.0 + corte);
+    let desde = medianoche("2026-04-09") + Duration::hours(20);
+    let hasta = medianoche("2026-04-11") + Duration::hours(4);
+
+    let id_dentro = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-09") + Duration::hours(23) + Duration::minutes(30),
+    )
+    .await;
+    let id_cambio_de_dia = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-10") + Duration::minutes(30),
+    )
+    .await;
+    let id_antes = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        medianoche("2026-04-10") + Duration::hours(22) + Duration::minutes(30),
+    )
+    .await;
+
+    let query = format!(
+        "?desde={}&hasta={}&{}&hora=23",
+        instante_query(desde),
+        instante_query(hasta),
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(1), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dentro], "body: {body}");
+    assert!(
+        !ids.contains(&id_cambio_de_dia) && !ids.contains(&id_antes),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn rechaza_hora_invalida() {
     let (_, app) = aplicacion().await;
-    for valor in ["0", "25", "-1", "abc", "1.5"] {
-        let (status, body) = get_reportes(&app, &format!("?intervalo_horas={valor}")).await;
+    for valor in ["24", "-1", "abc", "14.5", ""] {
+        let (status, body) = get_reportes(&app, &format!("?hora={valor}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "valor {valor}: {body}");
-        assert!(body.contains("intervalo_horas"), "valor {valor}: {body}");
+        assert!(body.contains("hora"), "valor {valor}: {body}");
     }
 }
 
 #[tokio::test]
-async fn rechaza_ventana_con_demasiados_segmentos() {
+async fn rechaza_intervalo_horas_retirado() {
     let (_, app) = aplicacion().await;
-    let (status, body) = get_reportes(
-        &app,
-        "?desde=2000-01-01T00:00:00Z&hasta=2000-03-01T00:00:00Z&intervalo_horas=1",
-    )
-    .await;
+    let (status, body) = get_reportes(&app, "?intervalo_horas=1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
     assert!(body.contains("intervalo_horas"), "body: {body}");
 }
 
 #[tokio::test]
-async fn acepta_ventana_de_exactamente_mil_segmentos() {
+async fn rechaza_hora_con_parametro_desconocido() {
     let (_, app) = aplicacion().await;
-    let (status, body) = get_reportes(
-        &app,
-        "?desde=2000-01-01T00:00:00Z&hasta=2000-02-11T16:00:00Z&intervalo_horas=1",
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(intervalos_de(&respuesta).len(), 1000);
+    let (status, _) = get_reportes(&app, "?hora=14&foo=1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1124,39 +1232,42 @@ async fn dia_pagina_con_limit_y_offset() {
 }
 
 #[tokio::test]
-async fn dia_con_intervalo_horas_genera_la_serie_del_dia() {
+async fn dia_y_hora_se_combinan() {
     let (pool, app) = aplicacion().await;
     limpiar_banda(&pool, 55.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (55.0 + corte, 55.0 + corte);
     let inicio = medianoche("2026-07-08");
 
-    insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::minutes(10)).await;
-    insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(5)).await;
-    insertar_reporte(
+    let id_inicio_franja =
+        insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(5)).await;
+    let id_en_franja = insertar_reporte(
         &pool,
         base_lat,
         base_lng,
-        inicio + Duration::hours(23) + Duration::minutes(59),
+        inicio + Duration::hours(5) + Duration::minutes(30),
     )
     .await;
+    let id_antes = insertar_reporte(
+        &pool,
+        base_lat,
+        base_lng,
+        inicio + Duration::hours(5) - Duration::minutes(1),
+    )
+    .await;
+    let id_despues = insertar_reporte(&pool, base_lat, base_lng, inicio + Duration::hours(6)).await;
 
-    let query = format!(
-        "?dia=2026-07-08&{}&intervalo_horas=1",
-        bbox_query(base_lat, base_lng)
-    );
+    let query = format!("?dia=2026-07-08&{}&hora=5", bbox_query(base_lat, base_lng));
     let (status, body) = get_reportes(&app, &query).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
-    assert_eq!(respuesta["intervalo_horas"].as_u64(), Some(1));
-    assert_eq!(respuesta["total"].as_i64(), Some(3));
-
-    let intervalos = intervalos_de(&respuesta);
-    assert_eq!(intervalos.len(), 24, "body: {body}");
-    assert_eq!(intervalos[0].0, inicio);
-    assert_eq!(intervalos[23].1, inicio + Duration::days(1));
-    let suma: i64 = intervalos.iter().map(|(_, _, total)| *total).sum();
-    assert_eq!(Some(suma), respuesta["total"].as_i64());
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_en_franja, id_inicio_franja], "body: {body}");
+    assert!(
+        !ids.contains(&id_antes) && !ids.contains(&id_despues),
+        "body: {body}"
+    );
 }
 
 #[tokio::test]

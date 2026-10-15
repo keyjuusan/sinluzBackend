@@ -5,9 +5,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 use crate::modules::actividad::domain::EventoActividad;
 use crate::modules::reportes::application::ResultadoConsulta;
-use crate::modules::reportes::domain::{
-    IntervaloReportes, ReporteConsulta, SolicitudConsultarReportes,
-};
+use crate::modules::reportes::domain::{ReporteConsulta, SolicitudConsultarReportes};
 use crate::modules::reportes::routes::{RespuestaRegistroReporte, SolicitudCrearReporte};
 
 #[derive(OpenApi)]
@@ -29,7 +27,6 @@ use crate::modules::reportes::routes::{RespuestaRegistroReporte, SolicitudCrearR
         SolicitudConsultarReportes,
         ResultadoConsulta,
         ReporteConsulta,
-        IntervaloReportes,
         EventoActividad,
         RespuestaError,
     ))

@@ -1,13 +1,10 @@
-use std::collections::HashMap;
 use std::fmt;
 
-use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::modules::reportes::domain::{
-    ErrorValidacionConsulta, IntervaloReportes, ReporteConsulta, SolicitudConsultarReportes,
-    construir_filtros,
+    ErrorValidacionConsulta, ReporteConsulta, SolicitudConsultarReportes, construir_filtros,
 };
 use crate::modules::reportes::infra::PostgresRepositorioReportes;
 
@@ -21,12 +18,6 @@ pub struct ResultadoConsulta {
     pub limit: u32,
     /// Número de reportes saltados.
     pub offset: u32,
-    /// Tamaño de intervalo aplicado, presente solo si se solicitó `intervalo_horas`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub intervalo_horas: Option<u32>,
-    /// Agregación por intervalos, presente solo si se solicitó `intervalo_horas`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub intervalos: Option<Vec<IntervaloReportes>>,
 }
 
 pub async fn consultar_reportes(
@@ -44,57 +35,12 @@ pub async fn consultar_reportes(
         .await
         .map_err(ErrorConsulta::Persistencia)?;
 
-    let (intervalo_horas, intervalos) = match filtros.intervalo_horas {
-        Some(valor) => {
-            let parciales = repositorio
-                .contar_reportes_por_intervalo(&filtros, valor)
-                .await
-                .map_err(ErrorConsulta::Persistencia)?;
-            (
-                Some(valor),
-                Some(construir_serie_intervalos(
-                    filtros.desde,
-                    filtros.hasta,
-                    valor,
-                    parciales,
-                )),
-            )
-        }
-        None => (None, None),
-    };
-
     Ok(ResultadoConsulta {
         reportes,
         total,
         limit: filtros.limit,
         offset: filtros.offset,
-        intervalo_horas,
-        intervalos,
     })
-}
-
-fn construir_serie_intervalos(
-    desde: DateTime<Utc>,
-    hasta: DateTime<Utc>,
-    intervalo_horas: u32,
-    parciales: Vec<IntervaloReportes>,
-) -> Vec<IntervaloReportes> {
-    let paso = Duration::hours(i64::from(intervalo_horas));
-    let mut conteos: HashMap<DateTime<Utc>, i64> = parciales
-        .into_iter()
-        .map(|intervalo| (intervalo.inicio, intervalo.total))
-        .collect();
-
-    let mut serie = Vec::new();
-    let mut inicio = desde;
-    while inicio < hasta {
-        let fin_natural = inicio + paso;
-        let fin = fin_natural.min(hasta);
-        let total = conteos.remove(&inicio).unwrap_or(0);
-        serie.push(IntervaloReportes { inicio, fin, total });
-        inicio = fin_natural;
-    }
-    serie
 }
 
 #[derive(Debug)]

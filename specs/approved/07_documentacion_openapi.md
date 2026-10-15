@@ -50,7 +50,6 @@ use utoipa::OpenApi;
         SolicitudConsultarReportes,
         ResultadoConsulta,
         ReporteConsulta,
-        IntervaloReportes,
         EventoActividad,
         RespuestaError,
     )),
@@ -70,9 +69,9 @@ Todas las respuestas de error de la API (`ErrorHttp`, `ErrorHttpActividad`) comp
 ### Derivas sobre tipos existentes (sin cambiar su lógica)
 - `SolicitudCrearReporte` (`reportes/routes.rs`): `+ ToSchema`.
 - `RespuestaRegistroReporte` (`reportes/routes.rs`): `+ ToSchema`.
-- `SolicitudConsultarReportes` (`reportes/domain/consulta.rs`): `+ IntoParams`. Los query params numéricos (`limit`, `offset`, `intervalo_horas`, coordenadas del bbox) se declaran como `Option<String>` en el código; en la doc se sobreescriben con `#[param(value_type = Option<u32>)]` / `Option<f64>` para reflejar su tipo real y sus descripciones del glosario.
+- `SolicitudConsultarReportes` (`reportes/domain/consulta.rs`): `+ IntoParams`. Los query params numéricos (`limit`, `offset`, `hora`, coordenadas del bbox) se declaran como `Option<String>` en el código; en la doc se sobreescriben con `#[param(value_type = Option<u32>)]` / `Option<u8>` / `Option<f64>` para reflejar su tipo real y sus descripciones del glosario.
 - `ResultadoConsulta` (`reportes/application/consultar_reportes.rs`): `+ ToSchema`.
-- `ReporteConsulta`, `IntervaloReportes` (`reportes/domain/consulta.rs`): `+ ToSchema`.
+- `ReporteConsulta` (`reportes/domain/consulta.rs`): `+ ToSchema`.
 - `EventoActividad` (`actividad/domain/evento.rs`): `+ ToSchema` (mensaje emitido por el canal WS).
 
 ## 3. Reglas de Negocio (Criterios de Aceptación)

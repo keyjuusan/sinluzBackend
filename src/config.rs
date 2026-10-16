@@ -2,14 +2,17 @@ use std::env;
 use std::fmt;
 
 use axum::http::HeaderValue;
+use chrono::{FixedOffset, Offset, Utc};
 
 const ORIGEN_POR_DEFECTO: &str = "http://localhost:5173";
+pub const HORARIO_ZONA_DEFECTO: &str = "-04:00";
 
 #[derive(Clone, Debug)]
 pub struct Config {
     pub database_url: String,
     pub cors_allowed_origin: HeaderValue,
     pub docs_habilitado: bool,
+    pub horario_zona: FixedOffset,
 }
 
 impl Config {
@@ -18,12 +21,62 @@ impl Config {
             env::var("DATABASE_URL").map_err(|_| ErrorConfig::VariableAusente("DATABASE_URL"))?;
         let cors_allowed_origin = parsear_origen(env::var("CORS_ALLOWED_ORIGIN").ok().as_deref())?;
         let docs_habilitado = parsear_docs_habilitado(env::var("DOCS_HABILITADO").ok().as_deref())?;
+        let horario_zona = resolver_zona(env::var("HORARIO_ZONA").ok().as_deref());
         Ok(Self {
             database_url,
             cors_allowed_origin,
             docs_habilitado,
+            horario_zona,
         })
     }
+}
+
+fn resolver_zona(valor: Option<&str>) -> FixedOffset {
+    match valor.map(str::trim) {
+        Some(texto) if !texto.is_empty() => match parsear_zona(texto) {
+            Some(zona) => zona,
+            None => {
+                eprintln!(
+                    "HORARIO_ZONA inválida: \"{texto}\". Se usa la zona por defecto ({HORARIO_ZONA_DEFECTO})"
+                );
+                zona_por_defecto()
+            }
+        },
+        _ => zona_por_defecto(),
+    }
+}
+
+fn parsear_zona(texto: &str) -> Option<FixedOffset> {
+    let bytes = texto.trim().as_bytes();
+    if bytes.len() != 6 || bytes[3] != b':' {
+        return None;
+    }
+    let signo = match bytes[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let hora = digito(bytes[1])? * 10 + digito(bytes[2])?;
+    let minuto = digito(bytes[4])? * 10 + digito(bytes[5])?;
+    if hora > 14 || minuto > 59 {
+        return None;
+    }
+    let segundos = signo * (hora * 3600 + minuto * 60);
+    if !(-14 * 3600..=14 * 3600).contains(&segundos) {
+        return None;
+    }
+    FixedOffset::east_opt(segundos)
+}
+
+fn digito(byte: u8) -> Option<i32> {
+    match byte {
+        b'0'..=b'9' => Some(i32::from(byte - b'0')),
+        _ => None,
+    }
+}
+
+fn zona_por_defecto() -> FixedOffset {
+    parsear_zona(HORARIO_ZONA_DEFECTO).unwrap_or_else(|| Utc.fix())
 }
 
 fn parsear_docs_habilitado(valor: Option<&str>) -> Result<bool, ErrorConfig> {
@@ -73,7 +126,77 @@ impl std::error::Error for ErrorConfig {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorConfig, ORIGEN_POR_DEFECTO, parsear_docs_habilitado, parsear_origen};
+    use chrono::FixedOffset;
+
+    use super::{
+        ErrorConfig, HORARIO_ZONA_DEFECTO, ORIGEN_POR_DEFECTO, parsear_docs_habilitado,
+        parsear_origen, parsear_zona, resolver_zona,
+    };
+
+    fn offset(segundos: i32) -> FixedOffset {
+        FixedOffset::east_opt(segundos).expect("offset de prueba válido")
+    }
+
+    #[test]
+    fn zona_ausente_o_vacia_usa_caracas() {
+        let caracas = offset(-4 * 3600);
+        assert_eq!(resolver_zona(None), caracas);
+        assert_eq!(resolver_zona(Some("")), caracas);
+        assert_eq!(resolver_zona(Some("   ")), caracas);
+    }
+
+    #[test]
+    fn zona_valida_se_parsea_a_su_offset() {
+        let casos = [
+            ("-04:00", -4 * 3600),
+            ("+00:00", 0),
+            ("+05:30", 5 * 3600 + 30 * 60),
+            ("-14:00", -14 * 3600),
+            ("+14:00", 14 * 3600),
+        ];
+        for (texto, segundos) in casos {
+            assert_eq!(
+                resolver_zona(Some(texto)),
+                offset(segundos),
+                "texto: {texto}"
+            );
+            assert!(parsear_zona(texto).is_some(), "texto: {texto}");
+        }
+    }
+
+    #[test]
+    fn zona_con_espacios_alrededor_se_parsea() {
+        assert_eq!(resolver_zona(Some("  -04:00  ")), offset(-4 * 3600));
+    }
+
+    #[test]
+    fn zona_invalida_cae_al_valor_por_defecto() {
+        let caracas = offset(-4 * 3600);
+        for texto in [
+            "banana",
+            "UTC",
+            "America/Caracas",
+            "-04",
+            "-0400",
+            "-4:0",
+            "+25:00",
+            "+14:30",
+            "-15:00",
+            "+04:60",
+            "2026-10-05",
+        ] {
+            assert!(
+                parsear_zona(texto).is_none(),
+                "debería ser inválido: {texto}"
+            );
+            assert_eq!(resolver_zona(Some(texto)), caracas, "texto: {texto}");
+        }
+    }
+
+    #[test]
+    fn horario_zona_defecto_es_caracas() {
+        assert_eq!(HORARIO_ZONA_DEFECTO, "-04:00");
+    }
 
     #[test]
     fn origen_ausente_usa_el_valor_por_defecto() {

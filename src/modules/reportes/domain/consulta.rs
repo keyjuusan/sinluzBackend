@@ -1,6 +1,6 @@
 use std::fmt;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -18,7 +18,8 @@ pub const HORA_MAX: u8 = 23;
 #[serde(deny_unknown_fields)]
 #[into_params(parameter_in = Query)]
 pub struct SolicitudConsultarReportes {
-    /// Día calendario (`YYYY-MM-DD`) en UTC que acota la consulta a la jornada completa.
+    /// Día calendario (`YYYY-MM-DD`) en la zona horaria configurada (`HORARIO_ZONA`,
+    /// por defecto `-04:00`, Caracas) que acota la consulta a la jornada completa.
     /// Alternativa a `desde`/`hasta`: son mutuamente excluyentes.
     pub dia: Option<String>,
     /// Inicio de la ventana temporal (RFC 3339). Por defecto, 24 horas antes de `hasta`.
@@ -43,7 +44,8 @@ pub struct SolicitudConsultarReportes {
     /// Número de reportes a saltar (mayor o igual a 0; por defecto 0).
     #[param(value_type = Option<u32>)]
     pub offset: Option<String>,
-    /// Hora del día en UTC (0–23) que acota la consulta a la franja `[hora, hora+1)`.
+    /// Hora del día en la zona horaria configurada (`HORARIO_ZONA`, por defecto
+    /// `-04:00`, Caracas) (0–23) que acota la consulta a la franja `[hora, hora+1)`.
     #[param(value_type = Option<u8>)]
     pub hora: Option<String>,
 }
@@ -62,6 +64,7 @@ pub struct FiltrosConsultaReporte {
     pub limit: u32,
     pub offset: u32,
     pub hora: Option<u8>,
+    pub horario_zona: FixedOffset,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -151,8 +154,9 @@ impl std::error::Error for ErrorValidacionConsulta {}
 
 pub fn construir_filtros(
     solicitud: &SolicitudConsultarReportes,
+    horario_zona: FixedOffset,
 ) -> Result<FiltrosConsultaReporte, ErrorValidacionConsulta> {
-    let (desde, hasta) = resolver_ventana(solicitud)?;
+    let (desde, hasta) = resolver_ventana(solicitud, horario_zona)?;
 
     let bbox = construir_bbox(solicitud)?;
     let limit = parse_u32(
@@ -176,17 +180,19 @@ pub fn construir_filtros(
         limit,
         offset,
         hora,
+        horario_zona,
     })
 }
 
 fn resolver_ventana(
     solicitud: &SolicitudConsultarReportes,
+    horario_zona: FixedOffset,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), ErrorValidacionConsulta> {
     if let Some(texto) = solicitud.dia.as_deref() {
         if solicitud.desde.is_some() || solicitud.hasta.is_some() {
             return Err(ErrorValidacionConsulta::DiaIncompatible);
         }
-        return parse_dia(texto);
+        return parse_dia(texto, horario_zona);
     }
 
     let ahora = Utc::now();
@@ -204,13 +210,17 @@ fn resolver_ventana(
     Ok((desde, hasta))
 }
 
-pub fn parse_dia(texto: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), ErrorValidacionConsulta> {
+pub fn parse_dia(
+    texto: &str,
+    horario_zona: FixedOffset,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ErrorValidacionConsulta> {
     let fecha = NaiveDate::parse_from_str(texto, "%Y-%m-%d")
         .map_err(|_| ErrorValidacionConsulta::DiaInvalido)?;
-    let inicio = fecha
+    let inicio_local = fecha
         .and_hms_opt(0, 0, 0)
         .ok_or(ErrorValidacionConsulta::DiaInvalido)?
         .and_utc();
+    let inicio = inicio_local - Duration::seconds(i64::from(horario_zona.local_minus_utc()));
     let fin = inicio + Duration::days(1);
     Ok((inicio, fin))
 }

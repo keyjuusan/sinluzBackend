@@ -15,7 +15,7 @@ use axum::{
     response::Response,
     routing::get,
 };
-use chrono::DateTime;
+use chrono::{DateTime, FixedOffset};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, time::Instant};
@@ -296,8 +296,9 @@ async fn exigir_cierre(cliente: ClienteWs, presupuesto: Duration) {
 }
 
 fn app_reportes_y_actividad(pool: sqlx::PgPool, canal: CanalActividad) -> Router {
+    let horario_zona = FixedOffset::east_opt(0).expect("offset de prueba válido");
     Router::new()
-        .merge(router_reportes(pool, canal.clone()))
+        .merge(router_reportes(pool, canal.clone(), horario_zona))
         .merge(router(canal))
 }
 

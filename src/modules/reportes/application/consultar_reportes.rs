@@ -1,5 +1,6 @@
 use std::fmt;
 
+use chrono::FixedOffset;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -23,8 +24,9 @@ pub struct ResultadoConsulta {
 pub async fn consultar_reportes(
     repositorio: &PostgresRepositorioReportes,
     solicitud: &SolicitudConsultarReportes,
+    horario_zona: FixedOffset,
 ) -> Result<ResultadoConsulta, ErrorConsulta> {
-    let filtros = construir_filtros(solicitud).map_err(ErrorConsulta::Validacion)?;
+    let filtros = construir_filtros(solicitud, horario_zona).map_err(ErrorConsulta::Validacion)?;
 
     let total = repositorio
         .contar_reportes(&filtros)

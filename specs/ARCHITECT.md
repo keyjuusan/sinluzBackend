@@ -21,7 +21,7 @@ sinluz/
 ├── server/                     # API Rust/axum
 │   ├── src/
 │   │   ├── main.rs             # Arranque del servidor: config, migraciones y composición del Router
-│   │   ├── config.rs           # Carga de .env (dotenvy) y DATABASE_URL
+│   │   ├── config.rs           # Carga de .env (dotenvy), DATABASE_URL y HORARIO_ZONA
 │   │   ├── modules/            # Módulos encapsulados por dominio de negocio
 │   │   │   ├── reportes/       # routes → application → domain → infra
 │   │   │   └── actividad/      # WebSocket de actividad en tiempo real (domain → infra → application → routes)
@@ -34,7 +34,7 @@ sinluz/
 │   │   ├── ARCHITECT.md        # Este documento
 │   │   └── GLOSSARY.md         # Terminología de negocio
 │   ├── docker-compose.yml      # postgres:17 de desarrollo (puerto 5432, credenciales sinluz/sinluz)
-│   ├── .env.example            # Plantilla de variables de entorno (DATABASE_URL)
+│   ├── .env.example            # Plantilla de variables de entorno (DATABASE_URL, CORS_ALLOWED_ORIGIN, DOCS_HABILITADO, HORARIO_ZONA)
 │   ├── Cargo.toml
 │   └── AGENTS.md               # Reglas operativas del agente
 └── .gitignore
@@ -59,6 +59,7 @@ Directrices técnicas de alto nivel para mantener la consistencia en todo el rep
 - [ ] Autenticación y autorización de usuarios.
 - [x] Feed de datos para el heatmap del cliente — spec `approved/02_consultar_reportes.md`: `GET /api/v1/reportes` con ventana temporal, bbox opcional y paginación `limit`/`offset`.
 - [x] Actividad en tiempo real — spec `approved/03_websocket_actividad.md`: `GET /api/v1/actividad/ws` emite `reporte_creado` al crear un reporte; 100 conexiones máx. (429), keepalive ping 30 s / inactividad 60 s, sin `id_usuario`.
-- [x] Filtro del feed por día calendario — spec `approved/06_filtro_por_dia.md`: `GET /api/v1/reportes?dia=YYYY-MM-DD` como alternativa opt-in a `desde`/`hasta` (jornada UTC `[dia 00:00, dia+1 00:00)`), combinable con bbox, paginación y `hora`.
+- [x] Filtro del feed por día calendario — spec `approved/06_filtro_por_dia.md`: `GET /api/v1/reportes?dia=YYYY-MM-DD` como alternativa opt-in a `desde`/`hasta` (jornada en `HORARIO_ZONA`, por defecto Caracas UTC-04:00 `[dia 00:00, dia+1 00:00)`), combinable con bbox, paginación y `hora`.
+- [x] Horario configurable por variable de entorno — spec `approved/08_horario_zona_configurable.md`: `HORARIO_ZONA` (offset fijo `±HH:MM`, por defecto `-04:00` Caracas) con el que `dia` y `hora` se interpretan en horario local; no altera `creado` ni `desde`/`hasta`.
 - [ ] Scaffolding del cliente (no existe `package.json`).
 - [ ] Offline de la PWA (registro de reportes sin conexión).

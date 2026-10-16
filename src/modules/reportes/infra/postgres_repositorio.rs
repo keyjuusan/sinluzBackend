@@ -86,9 +86,9 @@ impl PostgresRepositorioReportes {
                AND ($4::float8 IS NULL OR lat <= $4)
                AND ($5::float8 IS NULL OR lng >= $5)
                AND ($6::float8 IS NULL OR lng <= $6)
-               AND ($7::int IS NULL OR EXTRACT(HOUR FROM creado AT TIME ZONE 'UTC')::int = $7)
+               AND ($7::int IS NULL OR EXTRACT(HOUR FROM ((creado + ($8::int * interval '1 second')) AT TIME ZONE 'UTC'))::int = $7)
              ORDER BY creado DESC, id DESC
-             LIMIT $8 OFFSET $9",
+             LIMIT $9 OFFSET $10",
         )
         .bind(filtros.desde)
         .bind(filtros.hasta)
@@ -97,6 +97,7 @@ impl PostgresRepositorioReportes {
         .bind(bbox.map(|b| b.min_lng))
         .bind(bbox.map(|b| b.max_lng))
         .bind(filtros.hora.map(i32::from))
+        .bind(filtros.horario_zona.local_minus_utc())
         .bind(filtros.limit as i64)
         .bind(filtros.offset as i64)
         .fetch_all(&self.pool)
@@ -128,7 +129,7 @@ impl PostgresRepositorioReportes {
                AND ($4::float8 IS NULL OR lat <= $4)
                AND ($5::float8 IS NULL OR lng >= $5)
                AND ($6::float8 IS NULL OR lng <= $6)
-               AND ($7::int IS NULL OR EXTRACT(HOUR FROM creado AT TIME ZONE 'UTC')::int = $7)",
+               AND ($7::int IS NULL OR EXTRACT(HOUR FROM ((creado + ($8::int * interval '1 second')) AT TIME ZONE 'UTC'))::int = $7)",
         )
         .bind(filtros.desde)
         .bind(filtros.hasta)
@@ -137,6 +138,7 @@ impl PostgresRepositorioReportes {
         .bind(bbox.map(|b| b.min_lng))
         .bind(bbox.map(|b| b.max_lng))
         .bind(filtros.hora.map(i32::from))
+        .bind(filtros.horario_zona.local_minus_utc())
         .fetch_one(&self.pool)
         .await?;
         Ok(total)

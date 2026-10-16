@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate, SecondsFormat, TimeZone, Utc};
 use http_body_util::BodyExt;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -29,10 +29,22 @@ async fn pool_de_prueba() -> sqlx::PgPool {
     pool
 }
 
-async fn aplicacion() -> (sqlx::PgPool, Router) {
+async fn aplicacion(horario_zona: FixedOffset) -> (sqlx::PgPool, Router) {
     let pool = pool_de_prueba().await;
     let canal = CanalActividad::nuevo(MAX_CONEXIONES_ACTIVIDAD);
-    (pool.clone(), router(pool, canal))
+    (pool.clone(), router(pool, canal, horario_zona))
+}
+
+fn zona(segundos: i32) -> FixedOffset {
+    FixedOffset::east_opt(segundos).expect("offset de prueba válido")
+}
+
+fn caracas() -> FixedOffset {
+    zona(-4 * 3600)
+}
+
+fn utc() -> FixedOffset {
+    zona(0)
 }
 
 fn dispositivo_unico() -> String {
@@ -144,7 +156,7 @@ async fn limpiar_banda(pool: &sqlx::PgPool, banda: f64) {
 
 #[tokio::test]
 async fn registra_reporte_valido() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     let dispositivo = dispositivo_unico();
 
     let (status, body) = post_reporte(
@@ -186,7 +198,7 @@ async fn registra_reporte_valido() {
 
 #[tokio::test]
 async fn acepta_duracion_nula_y_omitida() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     let con_null = dispositivo_unico();
     let omitida = dispositivo_unico();
 
@@ -223,7 +235,7 @@ async fn acepta_duracion_nula_y_omitida() {
 
 #[tokio::test]
 async fn acepta_coordenadas_en_limites() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, _) = post_reporte(
         &app,
@@ -252,7 +264,7 @@ async fn acepta_coordenadas_en_limites() {
 
 #[tokio::test]
 async fn rechaza_coordenadas_fuera_de_rango() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = post_reporte(
         &app,
@@ -283,7 +295,7 @@ async fn rechaza_coordenadas_fuera_de_rango() {
 
 #[tokio::test]
 async fn rechaza_device_invalido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = post_reporte(
         &app,
@@ -314,7 +326,7 @@ async fn rechaza_device_invalido() {
 
 #[tokio::test]
 async fn rechaza_duracion_fuera_de_rango() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = post_reporte(
         &app,
@@ -346,7 +358,7 @@ async fn rechaza_duracion_fuera_de_rango() {
 
 #[tokio::test]
 async fn rechaza_campo_desconocido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, _) = post_reporte(
         &app,
         &json!({
@@ -363,7 +375,7 @@ async fn rechaza_campo_desconocido() {
 
 #[tokio::test]
 async fn rechaza_json_malformado_o_vacio() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = post_reporte(&app, "esto-no-es-json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -378,7 +390,7 @@ async fn rechaza_json_malformado_o_vacio() {
 
 #[tokio::test]
 async fn aplica_cooldown_misma_ubicacion() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let dispositivo = dispositivo_unico();
     let cuerpo = json!({
         "id_usuario": dispositivo,
@@ -397,7 +409,7 @@ async fn aplica_cooldown_misma_ubicacion() {
 
 #[tokio::test]
 async fn permite_otra_ubicacion_mismo_dispositivo() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let dispositivo = dispositivo_unico();
 
     for (lat, lng) in [(-33.45, -70.67), (-32.45, -69.67)] {
@@ -412,7 +424,7 @@ async fn permite_otra_ubicacion_mismo_dispositivo() {
 
 #[tokio::test]
 async fn permite_otro_dispositivo_misma_ubicacion() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     for _ in 0..2 {
         let (status, _) = post_reporte(
@@ -431,7 +443,7 @@ async fn permite_otro_dispositivo_misma_ubicacion() {
 
 #[tokio::test]
 async fn lista_reportes_ordenados_por_creado_con_total() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 10.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (10.0 + corte, 10.0 + corte);
@@ -466,7 +478,7 @@ async fn lista_reportes_ordenados_por_creado_con_total() {
 
 #[tokio::test]
 async fn filtra_por_ventana_temporal() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 20.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (20.0 + corte, 20.0 + corte);
@@ -500,7 +512,7 @@ async fn filtra_por_ventana_temporal() {
 
 #[tokio::test]
 async fn filtra_por_bbox_geografico() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 30.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (30.0 + corte, 30.0 + corte);
@@ -531,7 +543,7 @@ async fn filtra_por_bbox_geografico() {
 
 #[tokio::test]
 async fn pagina_con_limit_y_offset() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 40.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (40.0 + corte, 40.0 + corte);
@@ -566,7 +578,7 @@ async fn pagina_con_limit_y_offset() {
 
 #[tokio::test]
 async fn devuelve_lista_vacia_sin_reportes() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-40.0 + corte, -40.0 + corte);
 
@@ -583,7 +595,7 @@ async fn devuelve_lista_vacia_sin_reportes() {
 
 #[tokio::test]
 async fn excluye_reportes_fuera_de_la_ventana_por_defecto() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 50.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (50.0 + corte, 50.0 + corte);
@@ -607,7 +619,7 @@ async fn excluye_reportes_fuera_de_la_ventana_por_defecto() {
 
 #[tokio::test]
 async fn rechaza_fechas_invalidas() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = get_reportes(&app, "?desde=no-es-fecha").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -620,7 +632,7 @@ async fn rechaza_fechas_invalidas() {
 
 #[tokio::test]
 async fn rechaza_ventana_invertida() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, body) = get_reportes(
         &app,
         "?desde=2026-10-06T00:00:00Z&hasta=2026-10-05T00:00:00Z",
@@ -632,7 +644,7 @@ async fn rechaza_ventana_invertida() {
 
 #[tokio::test]
 async fn rechaza_bbox_incompleto() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, body) = get_reportes(&app, "?min_lat=10").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body.contains("bbox"), "body: {body}");
@@ -640,7 +652,7 @@ async fn rechaza_bbox_incompleto() {
 
 #[tokio::test]
 async fn rechaza_bbox_invertido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, body) = get_reportes(&app, "?min_lat=10&max_lat=9&min_lng=-75&max_lng=-76").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body.contains("bbox"), "body: {body}");
@@ -648,7 +660,7 @@ async fn rechaza_bbox_invertido() {
 
 #[tokio::test]
 async fn rechaza_bbox_fuera_de_rango() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = get_reportes(&app, "?min_lat=91&max_lat=92&min_lng=-70&max_lng=-69").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -662,7 +674,7 @@ async fn rechaza_bbox_fuera_de_rango() {
 
 #[tokio::test]
 async fn rechaza_limit_fuera_de_rango() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = get_reportes(&app, "?limit=0").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -678,7 +690,7 @@ async fn rechaza_limit_fuera_de_rango() {
 
 #[tokio::test]
 async fn rechaza_offset_negativo() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, body) = get_reportes(&app, "?offset=-1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body.contains("offset"), "body: {body}");
@@ -686,7 +698,7 @@ async fn rechaza_offset_negativo() {
 
 #[tokio::test]
 async fn rechaza_parametro_desconocido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, _) = get_reportes(&app, "?foo=1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -715,7 +727,7 @@ fn medianoche(dia: &str) -> DateTime<Utc> {
 
 #[tokio::test]
 async fn hora_filtra_la_franja_entre_esa_hora_y_la_siguiente() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 60.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (60.0 + corte, 60.0 + corte);
@@ -760,7 +772,7 @@ async fn hora_filtra_la_franja_entre_esa_hora_y_la_siguiente() {
 
 #[tokio::test]
 async fn hora_se_repite_en_cada_dia_de_la_ventana() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 70.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (70.0 + corte, 70.0 + corte);
@@ -822,7 +834,7 @@ async fn hora_se_repite_en_cada_dia_de_la_ventana() {
 
 #[tokio::test]
 async fn hora_se_recorta_con_la_ventana_multidia_parcial() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 80.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (80.0 + corte, 80.0 + corte);
@@ -856,7 +868,7 @@ async fn hora_se_recorta_con_la_ventana_multidia_parcial() {
 
 #[tokio::test]
 async fn hora_se_combina_con_bbox() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, -55.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-55.0 + corte, -55.0 + corte);
@@ -905,7 +917,7 @@ async fn hora_se_combina_con_bbox() {
 
 #[tokio::test]
 async fn hora_pagina_con_limit_y_offset() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, -60.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-60.0 + corte, -60.0 + corte);
@@ -953,7 +965,7 @@ async fn hora_pagina_con_limit_y_offset() {
 
 #[tokio::test]
 async fn franja_sin_reportes_devuelve_lista_vacia() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, -50.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-50.0 + corte, -50.0 + corte);
@@ -980,7 +992,7 @@ async fn franja_sin_reportes_devuelve_lista_vacia() {
 
 #[tokio::test]
 async fn sin_hora_la_respuesta_solo_tiene_las_claves_de_la_spec_02() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-45.0 + corte, -45.0 + corte);
 
@@ -1003,7 +1015,7 @@ async fn sin_hora_la_respuesta_solo_tiene_las_claves_de_la_spec_02() {
 
 #[tokio::test]
 async fn hora_cero_es_valido_y_cubre_la_medianoche() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, -65.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-65.0 + corte, -65.0 + corte);
@@ -1052,7 +1064,7 @@ async fn hora_cero_es_valido_y_cubre_la_medianoche() {
 
 #[tokio::test]
 async fn hora_23_es_valido_y_llega_hasta_el_cambio_de_dia() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, -70.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (-70.0 + corte, -70.0 + corte);
@@ -1101,7 +1113,7 @@ async fn hora_23_es_valido_y_llega_hasta_el_cambio_de_dia() {
 
 #[tokio::test]
 async fn rechaza_hora_invalida() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     for valor in ["24", "-1", "abc", "14.5", ""] {
         let (status, body) = get_reportes(&app, &format!("?hora={valor}")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "valor {valor}: {body}");
@@ -1111,7 +1123,7 @@ async fn rechaza_hora_invalida() {
 
 #[tokio::test]
 async fn rechaza_intervalo_horas_retirado() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, body) = get_reportes(&app, "?intervalo_horas=1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
     assert!(body.contains("intervalo_horas"), "body: {body}");
@@ -1119,14 +1131,14 @@ async fn rechaza_intervalo_horas_retirado() {
 
 #[tokio::test]
 async fn rechaza_hora_con_parametro_desconocido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, _) = get_reportes(&app, "?hora=14&foo=1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn filtra_por_dia_calendario() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 5.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (5.0 + corte, 5.0 + corte);
@@ -1151,7 +1163,7 @@ async fn filtra_por_dia_calendario() {
 
 #[tokio::test]
 async fn dia_incluye_el_inicio_y_excluye_el_fin() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 15.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (15.0 + corte, 15.0 + corte);
@@ -1172,7 +1184,7 @@ async fn dia_incluye_el_inicio_y_excluye_el_fin() {
 
 #[tokio::test]
 async fn dia_se_combina_con_bbox() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 25.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (25.0 + corte, 25.0 + corte);
@@ -1199,7 +1211,7 @@ async fn dia_se_combina_con_bbox() {
 
 #[tokio::test]
 async fn dia_pagina_con_limit_y_offset() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 35.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (35.0 + corte, 35.0 + corte);
@@ -1233,7 +1245,7 @@ async fn dia_pagina_con_limit_y_offset() {
 
 #[tokio::test]
 async fn dia_y_hora_se_combinan() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(utc()).await;
     limpiar_banda(&pool, 55.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (55.0 + corte, 55.0 + corte);
@@ -1272,7 +1284,7 @@ async fn dia_y_hora_se_combinan() {
 
 #[tokio::test]
 async fn dia_sin_reportes_devuelve_lista_vacia() {
-    let (pool, app) = aplicacion().await;
+    let (pool, app) = aplicacion(caracas()).await;
     limpiar_banda(&pool, 65.0).await;
     let corte = coordenada_unica();
     let (base_lat, base_lng) = (65.0 + corte, 65.0 + corte);
@@ -1287,7 +1299,7 @@ async fn dia_sin_reportes_devuelve_lista_vacia() {
 
 #[tokio::test]
 async fn rechaza_dia_malformado() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     for valor in [
         "no-es-fecha",
         "2026-13-01",
@@ -1303,7 +1315,7 @@ async fn rechaza_dia_malformado() {
 
 #[tokio::test]
 async fn rechaza_dia_incompatible_con_ventana() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
 
     let (status, body) = get_reportes(&app, "?dia=2026-10-05&desde=2026-10-04T00:00:00Z").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
@@ -1316,7 +1328,248 @@ async fn rechaza_dia_incompatible_con_ventana() {
 
 #[tokio::test]
 async fn rechaza_dia_con_parametro_desconocido() {
-    let (_, app) = aplicacion().await;
+    let (_, app) = aplicacion(caracas()).await;
     let (status, _) = get_reportes(&app, "?dia=2026-10-05&foo=1").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+fn instante(anio: i32, mes: u32, dia: u32, hora: u32, minuto: u32, segundo: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(anio, mes, dia, hora, minuto, segundo)
+        .single()
+        .expect("instante válido")
+}
+
+#[tokio::test]
+async fn dia_usa_la_zona_configurada_caracas() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, 85.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (85.0 + corte, 85.0 + corte);
+
+    let id_fuera_antes =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 3, 59, 59)).await;
+    let id_inicio =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 4, 0, 0)).await;
+    let id_ultimo =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 6, 3, 59, 59)).await;
+    let id_fuera_despues =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 6, 4, 0, 0)).await;
+
+    let query = format!("?dia=2026-10-05&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert!(
+        ids.contains(&id_inicio) && ids.contains(&id_ultimo),
+        "body: {body}"
+    );
+    assert!(
+        !ids.contains(&id_fuera_antes) && !ids.contains(&id_fuera_despues),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn hora_usa_la_zona_configurada_caracas() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, 45.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (45.0 + corte, 45.0 + corte);
+
+    let id_fuera_antes =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 17, 59, 59)).await;
+    let id_inicio =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 0, 0)).await;
+    let id_ultimo =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 59, 59)).await;
+    let id_fuera_despues =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 19, 0, 0)).await;
+
+    let query = format!(
+        "?desde=2026-10-05T00:00:00Z&hasta=2026-10-06T00:00:00Z&hora=14&{}",
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert!(
+        ids.contains(&id_inicio) && ids.contains(&id_ultimo),
+        "body: {body}"
+    );
+    assert!(
+        !ids.contains(&id_fuera_antes) && !ids.contains(&id_fuera_despues),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn dia_y_hora_usan_la_zona_configurada_caracas() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, -75.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-75.0 + corte, -75.0 + corte);
+
+    let id_inicio =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 0, 0)).await;
+    let id_media =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 30, 0)).await;
+    let id_antes =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 17, 59, 59)).await;
+    let id_despues =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 19, 0, 0)).await;
+
+    let query = format!("?dia=2026-10-05&hora=14&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert!(
+        ids.contains(&id_inicio) && ids.contains(&id_media),
+        "body: {body}"
+    );
+    assert!(
+        !ids.contains(&id_antes) && !ids.contains(&id_despues),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn hora_con_offset_de_minutos_desplaza_la_franja() {
+    let (pool, app) = aplicacion(zona(5 * 3600 + 30 * 60)).await;
+    limpiar_banda(&pool, -80.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-80.0 + corte, -80.0 + corte);
+
+    let id_fuera_antes =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 8, 29, 59)).await;
+    let id_inicio =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 8, 30, 0)).await;
+    let id_ultimo =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 9, 29, 59)).await;
+    let id_fuera_despues =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 9, 30, 0)).await;
+
+    let query = format!(
+        "?desde=2026-10-05T00:00:00Z&hasta=2026-10-06T00:00:00Z&hora=14&{}",
+        bbox_query(base_lat, base_lng)
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert!(
+        ids.contains(&id_inicio) && ids.contains(&id_ultimo),
+        "body: {body}"
+    );
+    assert!(
+        !ids.contains(&id_fuera_antes) && !ids.contains(&id_fuera_despues),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn dia_con_offset_de_minutos_cruza_la_medianoche_utc() {
+    let (pool, app) = aplicacion(zona(5 * 3600 + 30 * 60)).await;
+    limpiar_banda(&pool, -85.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-85.0 + corte, -85.0 + corte);
+
+    let id_fuera_antes =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 4, 18, 29, 59)).await;
+    let id_inicio =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 4, 18, 30, 0)).await;
+    let id_ultimo =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 29, 59)).await;
+    let id_fuera_despues =
+        insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 18, 30, 0)).await;
+
+    let query = format!("?dia=2026-10-05&{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(2), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert!(
+        ids.contains(&id_inicio) && ids.contains(&id_ultimo),
+        "body: {body}"
+    );
+    assert!(
+        !ids.contains(&id_fuera_antes) && !ids.contains(&id_fuera_despues),
+        "body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn zona_configurada_pagina_sobre_la_franja_local() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, 75.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (75.0 + corte, 75.0 + corte);
+
+    let mut ids_franja = Vec::new();
+    for minuto in [10, 20, 30] {
+        ids_franja.push(
+            insertar_reporte(
+                &pool,
+                base_lat,
+                base_lng,
+                instante(2026, 10, 5, 18, minuto, 0),
+            )
+            .await,
+        );
+    }
+    insertar_reporte(&pool, base_lat, base_lng, instante(2026, 10, 5, 17, 50, 0)).await;
+    insertar_reporte(
+        &pool,
+        base_lat + 1.0,
+        base_lng + 1.0,
+        instante(2026, 10, 5, 18, 15, 0),
+    )
+    .await;
+    ids_franja.reverse();
+
+    let base_query = format!("?dia=2026-10-05&hora=14&{}", bbox_query(base_lat, base_lng));
+
+    let (status, body) = get_reportes(&app, &format!("{base_query}&limit=2&offset=0")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3), "body: {body}");
+    let primera = ids_de(&respuesta);
+    assert_eq!(primera, ids_franja[..2].to_vec(), "body: {body}");
+
+    let (status, body) = get_reportes(&app, &format!("{base_query}&limit=2&offset=2")).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(3), "body: {body}");
+    let segunda = ids_de(&respuesta);
+    assert_eq!(segunda, vec![ids_franja[2].clone()], "body: {body}");
+    assert!(primera.iter().all(|id| !segunda.contains(id)));
+}
+
+#[tokio::test]
+async fn sin_dia_ni_hora_la_zona_no_afecta_la_consulta() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, -35.0).await;
+    let corte = coordenada_unica();
+    let (base_lat, base_lng) = (-35.0 + corte, -35.0 + corte);
+    let ahora = Utc::now();
+
+    let id_dentro = insertar_reporte(&pool, base_lat, base_lng, ahora - Duration::hours(1)).await;
+    let id_fuera = insertar_reporte(&pool, base_lat, base_lng, ahora - Duration::hours(25)).await;
+
+    let query = format!("?{}", bbox_query(base_lat, base_lng));
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(respuesta["total"].as_i64(), Some(1), "body: {body}");
+    let ids = ids_de(&respuesta);
+    assert_eq!(ids, vec![id_dentro], "body: {body}");
+    assert!(!ids.contains(&id_fuera));
+    assert!(respuesta.get("hora").is_none(), "body: {body}");
 }

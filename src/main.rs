@@ -58,7 +58,11 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health))
-        .merge(modules::reportes::routes::router(pool, canal.clone()))
+        .merge(modules::reportes::routes::router(
+            pool,
+            canal.clone(),
+            config.horario_zona,
+        ))
         .merge(modules::actividad::routes::router(canal))
         .merge(docs::router_opcional(config.docs_habilitado))
         .layer(capa(config.cors_allowed_origin.clone()));

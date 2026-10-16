@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use chrono::FixedOffset;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -27,13 +28,18 @@ use crate::modules::reportes::infra::PostgresRepositorioReportes;
 pub(crate) struct EstadoReportes {
     repositorio: PostgresRepositorioReportes,
     canal: CanalActividad,
+    horario_zona: FixedOffset,
 }
 
-pub fn router(pool: PgPool, canal: CanalActividad) -> Router {
+pub fn router(pool: PgPool, canal: CanalActividad, horario_zona: FixedOffset) -> Router {
     let repositorio = PostgresRepositorioReportes::new(pool);
     Router::new()
         .route("/api/v1/reportes", get(listar_reportes).post(crear_reporte))
-        .with_state(EstadoReportes { repositorio, canal })
+        .with_state(EstadoReportes {
+            repositorio,
+            canal,
+            horario_zona,
+        })
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -125,7 +131,7 @@ pub async fn listar_reportes(
 ) -> Result<Json<ResultadoConsulta>, ErrorHttp> {
     let Query(solicitud) = query.map_err(ErrorHttp::ConsultaInvalida)?;
 
-    let resultado = consultar_reportes(&estado.repositorio, &solicitud)
+    let resultado = consultar_reportes(&estado.repositorio, &solicitud, estado.horario_zona)
         .await
         .map_err(ErrorHttp::desde_consulta)?;
 

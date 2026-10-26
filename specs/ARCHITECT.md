@@ -8,6 +8,7 @@ El agente de IA no debe utilizar herramientas, frameworks o librerías fuera de 
 - **Backend / API:** Rust, axum (features `["ws"]` para WebSockets), tokio, serde / serde_json. Entry point: `server/src/main.rs`.
 - **Base de Datos / Persistencia:** PostgreSQL con SQLx, ya integrado en `Cargo.toml` por la spec `01_registrar_reporte` (approved). Features activas: `postgres`, `runtime-tokio-rustls`, `migrate`, `chrono`. Soporte de fechas con `chrono` (decodificación de `TIMESTAMPTZ`) y carga de `.env` con `dotenvy`. Migraciones en `server/migrations/`, aplicadas en el arranque con `sqlx::migrate!`.
 - **Tests de integración:** `tower` (oneshot sobre el Router), `http-body-util` y `tokio-tungstenite` (cliente WebSocket e2e, sin features TLS) como `[dev-dependencies]`.
+- **Geocerca:** `country-boundaries` 1.2.0 (dataset embebido de fronteras, datos ODbL © OpenStreetMap contributors) para validar que un reporte cae dentro de Venezuela (`VE`), autorizado por la spec `backlog/09_validar_area_venezuela.md`.
 - **Frontend / UI:** React, Vite, TypeScript, Tailwind CSS, Leaflet + leaflet.heat, vite-plugin-pwa, lucide-react.
 - **Gestión de Estado / Caché:** sin librería de estado global definida todavía; preferir `useReducer`/hooks nativos de React hasta que una spec justifique otra.
 - **Datos de prueba:** @faker-js/faker ya está instalado en `client/` para generar datos sintéticos en desarrollo.
@@ -57,6 +58,7 @@ Directrices técnicas de alto nivel para mantener la consistencia en todo el rep
 - [x] Persistencia PostgreSQL/SQLx con migraciones y entorno de desarrollo (docker-compose).
 - [x] `specs/GLOSSARY.md` con la terminología de negocio en español.
 - [ ] Autenticación y autorización de usuarios.
+- [ ] Validación de que el reporte cae dentro del área de Venezuela — spec `backlog/09_validar_area_venezuela.md`.
 - [x] Feed de datos para el heatmap del cliente — spec `approved/02_consultar_reportes.md`: `GET /api/v1/reportes` con ventana temporal, bbox opcional y paginación `limit`/`offset`.
 - [x] Actividad en tiempo real — spec `approved/03_websocket_actividad.md`: `GET /api/v1/actividad/ws` emite `reporte_creado` al crear un reporte; 100 conexiones máx. (429), keepalive ping 30 s / inactividad 60 s, sin `id_usuario`.
 - [x] Filtro del feed por día calendario — spec `approved/06_filtro_por_dia.md`: `GET /api/v1/reportes?dia=YYYY-MM-DD` como alternativa opt-in a `desde`/`hasta` (jornada en `HORARIO_ZONA`, por defecto Caracas UTC-04:00 `[dia 00:00, dia+1 00:00)`), combinable con bbox, paginación y `hora`.

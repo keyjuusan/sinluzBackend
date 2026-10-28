@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     extract::{
@@ -20,7 +22,7 @@ use crate::modules::reportes::application::{
     ErrorConsulta, ErrorRegistro, ResultadoConsulta, consultar_reportes, registrar_reporte,
 };
 use crate::modules::reportes::domain::{
-    ErrorValidacion, ErrorValidacionConsulta, SolicitudConsultarReportes,
+    ErrorValidacion, ErrorValidacionConsulta, GeocercaVenezuela, SolicitudConsultarReportes,
 };
 use crate::modules::reportes::infra::PostgresRepositorioReportes;
 
@@ -29,9 +31,15 @@ pub(crate) struct EstadoReportes {
     repositorio: PostgresRepositorioReportes,
     canal: CanalActividad,
     horario_zona: FixedOffset,
+    geocerca: Arc<GeocercaVenezuela>,
 }
 
-pub fn router(pool: PgPool, canal: CanalActividad, horario_zona: FixedOffset) -> Router {
+pub fn router(
+    pool: PgPool,
+    canal: CanalActividad,
+    horario_zona: FixedOffset,
+    geocerca: Arc<GeocercaVenezuela>,
+) -> Router {
     let repositorio = PostgresRepositorioReportes::new(pool);
     Router::new()
         .route("/api/v1/reportes", get(listar_reportes).post(crear_reporte))
@@ -39,6 +47,7 @@ pub fn router(pool: PgPool, canal: CanalActividad, horario_zona: FixedOffset) ->
             repositorio,
             canal,
             horario_zona,
+            geocerca,
         })
 }
 
@@ -65,15 +74,16 @@ pub struct RespuestaRegistroReporte {
 
 /// Registra un corte de suministro eléctrico notificado por un dispositivo.
 ///
-/// Valida el cuerpo, aplica la medida anti-spam (cooldown) por dispositivo y
-/// ubicación, persiste el reporte y publica el evento de actividad.
+/// Valida el cuerpo, exige que la ubicación esté dentro de Venezuela, aplica la
+/// medida anti-spam (cooldown) por dispositivo y ubicación, persiste el reporte
+/// y publica el evento de actividad.
 #[utoipa::path(
     post,
     path = "/api/v1/reportes",
     request_body = SolicitudCrearReporte,
     responses(
         (status = 201, description = "Reporte registrado", body = RespuestaRegistroReporte),
-        (status = 400, description = "Solicitud inválida", body = crate::docs::RespuestaError),
+        (status = 400, description = "Solicitud inválida o ubicación fuera de Venezuela", body = crate::docs::RespuestaError),
         (status = 429, description = "Cooldown activo para el mismo dispositivo y ubicación", body = crate::docs::RespuestaError),
         (status = 500, description = "Error interno del servidor", body = crate::docs::RespuestaError),
     )
@@ -86,6 +96,7 @@ pub async fn crear_reporte(
 
     let reporte = registrar_reporte(
         &estado.repositorio,
+        estado.geocerca.as_ref(),
         &solicitud.id_usuario,
         solicitud.lat,
         solicitud.lng,

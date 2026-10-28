@@ -2,17 +2,21 @@ use std::fmt;
 
 use chrono::Utc;
 
-use crate::modules::reportes::domain::{ErrorValidacion, Reporte, validar_datos};
+use crate::modules::reportes::domain::{
+    ErrorValidacion, GeocercaVenezuela, Reporte, validar_datos,
+};
 use crate::modules::reportes::infra::PostgresRepositorioReportes;
 
 pub async fn registrar_reporte(
     repositorio: &PostgresRepositorioReportes,
+    geocerca: &GeocercaVenezuela,
     id_usuario: &str,
     lat: f64,
     lng: f64,
     horas_duracion: Option<u16>,
 ) -> Result<Reporte, ErrorRegistro> {
-    validar_datos(id_usuario, lat, lng, horas_duracion).map_err(ErrorRegistro::Validacion)?;
+    validar_datos(geocerca, id_usuario, lat, lng, horas_duracion)
+        .map_err(ErrorRegistro::Validacion)?;
 
     if repositorio
         .existe_reporte_reciente(id_usuario, lat, lng)

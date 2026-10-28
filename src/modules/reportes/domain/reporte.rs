@@ -2,6 +2,8 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 
+use super::ubicacion::GeocercaVenezuela;
+
 pub const MINIMO_LARGO_ID_USUARIO: usize = 8;
 pub const MAXIMO_LARGO_ID_USUARIO: usize = 64;
 pub const MAXIMO_HORAS_DURACION: u16 = 168;
@@ -22,6 +24,8 @@ pub enum ErrorValidacion {
     LatitudFueraDeRango,
     LongitudFueraDeRango,
     DuracionFueraDeRango,
+    CoordenadaInvalida,
+    UbicacionFueraDeVenezuela,
 }
 
 impl fmt::Display for ErrorValidacion {
@@ -41,6 +45,15 @@ impl fmt::Display for ErrorValidacion {
                     "horas_duracion inválida: debe estar entre 0 y {MAXIMO_HORAS_DURACION}"
                 )
             }
+            ErrorValidacion::CoordenadaInvalida => {
+                write!(f, "coordenadas lat/lng inválidas")
+            }
+            ErrorValidacion::UbicacionFueraDeVenezuela => {
+                write!(
+                    f,
+                    "ubicación fuera de Venezuela: el reporte debe registrarse dentro del territorio venezolano"
+                )
+            }
         }
     }
 }
@@ -48,6 +61,7 @@ impl fmt::Display for ErrorValidacion {
 impl std::error::Error for ErrorValidacion {}
 
 pub fn validar_datos(
+    geocerca: &GeocercaVenezuela,
     id_usuario: &str,
     lat: f64,
     lng: f64,
@@ -56,7 +70,8 @@ pub fn validar_datos(
     validar_id_usuario(id_usuario)?;
     validar_latitud(lat)?;
     validar_longitud(lng)?;
-    validar_duracion(horas_duracion)
+    validar_duracion(horas_duracion)?;
+    geocerca.validar(lat, lng)
 }
 
 pub fn validar_id_usuario(id_usuario: &str) -> Result<(), ErrorValidacion> {
@@ -92,5 +107,61 @@ pub fn validar_duracion(horas_duracion: Option<u16>) -> Result<(), ErrorValidaci
         Err(ErrorValidacion::DuracionFueraDeRango)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn los_limites_globales_son_inclusivos() {
+        for lat in [-90.0, 90.0] {
+            assert!(validar_latitud(lat).is_ok(), "lat {lat} debe ser válida");
+        }
+        for lng in [-180.0, 180.0] {
+            assert!(validar_longitud(lng).is_ok(), "lng {lng} debe ser válida");
+        }
+    }
+
+    #[test]
+    fn los_valores_fuera_de_los_limites_globales_no_son_validos() {
+        for lat in [90.1, -90.1] {
+            assert_eq!(
+                validar_latitud(lat),
+                Err(ErrorValidacion::LatitudFueraDeRango)
+            );
+        }
+        for lng in [180.1, -180.1] {
+            assert_eq!(
+                validar_longitud(lng),
+                Err(ErrorValidacion::LongitudFueraDeRango)
+            );
+        }
+    }
+
+    #[test]
+    fn la_geocerca_se_valida_despues_de_los_demas_campos() {
+        let geocerca =
+            GeocercaVenezuela::desde_datos_embebidos().expect("el dataset embebido debe cargar");
+        let valido = "dispositivo-valido";
+
+        assert_eq!(
+            validar_datos(&geocerca, "corto", -33.4489, -70.6693, None),
+            Err(ErrorValidacion::IdUsuarioInvalido)
+        );
+        assert_eq!(
+            validar_datos(&geocerca, valido, 90.1, 0.0, None),
+            Err(ErrorValidacion::LatitudFueraDeRango)
+        );
+        assert_eq!(
+            validar_datos(&geocerca, valido, 90.0, 0.0, None),
+            Err(ErrorValidacion::UbicacionFueraDeVenezuela)
+        );
+        assert_eq!(
+            validar_datos(&geocerca, valido, 10.4806, -66.9036, Some(169)),
+            Err(ErrorValidacion::DuracionFueraDeRango)
+        );
+        assert!(validar_datos(&geocerca, valido, 10.4806, -66.9036, None).is_ok());
     }
 }

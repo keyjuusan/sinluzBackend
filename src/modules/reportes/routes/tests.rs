@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{Arc, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     Router,
@@ -12,8 +15,21 @@ use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
 use crate::modules::actividad::{MAX_CONEXIONES_ACTIVIDAD, infra::CanalActividad};
+use crate::modules::reportes::domain::GeocercaVenezuela;
 
 use super::router;
+
+fn geocerca_de_prueba() -> Arc<GeocercaVenezuela> {
+    static GEOCERCA: OnceLock<Arc<GeocercaVenezuela>> = OnceLock::new();
+    GEOCERCA
+        .get_or_init(|| {
+            Arc::new(
+                GeocercaVenezuela::desde_datos_embebidos()
+                    .expect("el dataset embebido de fronteras debe cargar"),
+            )
+        })
+        .clone()
+}
 
 async fn pool_de_prueba() -> sqlx::PgPool {
     dotenvy::dotenv().ok();
@@ -32,7 +48,10 @@ async fn pool_de_prueba() -> sqlx::PgPool {
 async fn aplicacion(horario_zona: FixedOffset) -> (sqlx::PgPool, Router) {
     let pool = pool_de_prueba().await;
     let canal = CanalActividad::nuevo(MAX_CONEXIONES_ACTIVIDAD);
-    (pool.clone(), router(pool, canal, horario_zona))
+    (
+        pool.clone(),
+        router(pool, canal, horario_zona, geocerca_de_prueba()),
+    )
 }
 
 fn zona(segundos: i32) -> FixedOffset {
@@ -163,8 +182,8 @@ async fn registra_reporte_valido() {
         &app,
         &json!({
             "id_usuario": dispositivo,
-            "lat": -33.4489,
-            "lng": -70.6693,
+            "lat": 10.4806,
+            "lng": -66.9036,
             "horas_duracion": 2
         })
         .to_string(),
@@ -206,8 +225,8 @@ async fn acepta_duracion_nula_y_omitida() {
         &app,
         &json!({
             "id_usuario": con_null,
-            "lat": -33.45,
-            "lng": -70.67,
+            "lat": 10.4806,
+            "lng": -66.9036,
             "horas_duracion": null
         })
         .to_string(),
@@ -217,7 +236,7 @@ async fn acepta_duracion_nula_y_omitida() {
 
     let (status, _) = post_reporte(
         &app,
-        &format!(r#"{{"id_usuario":"{omitida}","lat":-33.46,"lng":-70.68}}"#),
+        &format!(r#"{{"id_usuario":"{omitida}","lat":10.4810,"lng":-66.9040}}"#),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -231,35 +250,6 @@ async fn acepta_duracion_nula_y_omitida() {
                 .expect("fallo la consulta de verificación");
         assert!(es_nulo.0, "se debió persistir NULL para {dispositivo}");
     }
-}
-
-#[tokio::test]
-async fn acepta_coordenadas_en_limites() {
-    let (_, app) = aplicacion(caracas()).await;
-
-    let (status, _) = post_reporte(
-        &app,
-        &json!({
-            "id_usuario": dispositivo_unico(),
-            "lat": 90.0,
-            "lng": 180.0
-        })
-        .to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-
-    let (status, _) = post_reporte(
-        &app,
-        &json!({
-            "id_usuario": dispositivo_unico(),
-            "lat": -90.0,
-            "lng": -180.0
-        })
-        .to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -332,8 +322,8 @@ async fn rechaza_duracion_fuera_de_rango() {
         &app,
         &json!({
             "id_usuario": dispositivo_unico(),
-            "lat": 12.0,
-            "lng": 45.0,
+            "lat": 10.4806,
+            "lng": -66.9036,
             "horas_duracion": 169
         })
         .to_string(),
@@ -346,8 +336,8 @@ async fn rechaza_duracion_fuera_de_rango() {
         &app,
         &json!({
             "id_usuario": dispositivo_unico(),
-            "lat": 12.0,
-            "lng": 46.0,
+            "lat": 10.6545,
+            "lng": -71.6405,
             "horas_duracion": 168
         })
         .to_string(),
@@ -394,8 +384,8 @@ async fn aplica_cooldown_misma_ubicacion() {
     let dispositivo = dispositivo_unico();
     let cuerpo = json!({
         "id_usuario": dispositivo,
-        "lat": -33.45,
-        "lng": -70.67
+        "lat": 10.4806,
+        "lng": -66.9036
     })
     .to_string();
 
@@ -412,7 +402,7 @@ async fn permite_otra_ubicacion_mismo_dispositivo() {
     let (_, app) = aplicacion(caracas()).await;
     let dispositivo = dispositivo_unico();
 
-    for (lat, lng) in [(-33.45, -70.67), (-32.45, -69.67)] {
+    for (lat, lng) in [(10.4806, -66.9036), (10.6545, -71.6405)] {
         let (status, _) = post_reporte(
             &app,
             &json!({ "id_usuario": dispositivo, "lat": lat, "lng": lng }).to_string(),
@@ -431,14 +421,142 @@ async fn permite_otro_dispositivo_misma_ubicacion() {
             &app,
             &json!({
                 "id_usuario": dispositivo_unico(),
-                "lat": -33.45,
-                "lng": -70.67
+                "lat": 10.4806,
+                "lng": -66.9036
             })
             .to_string(),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
     }
+}
+
+#[tokio::test]
+async fn acepta_maracaibo_y_porlamar() {
+    let (_, app) = aplicacion(caracas()).await;
+
+    for (lat, lng) in [(10.6545, -71.6405), (10.9577, -63.8697)] {
+        let (status, body) = post_reporte(
+            &app,
+            &json!({ "id_usuario": dispositivo_unico(), "lat": lat, "lng": lng }).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "({lat}, {lng}): {body}");
+    }
+}
+
+#[tokio::test]
+async fn rechaza_ubicacion_fuera_de_venezuela_sin_persistir() {
+    let (pool, app) = aplicacion(caracas()).await;
+
+    for (lat, lng) in [(-33.4489, -70.6693), (4.7110, -74.0721)] {
+        let dispositivo = dispositivo_unico();
+        let (status, body) = post_reporte(
+            &app,
+            &json!({ "id_usuario": dispositivo, "lat": lat, "lng": lng }).to_string(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "({lat}, {lng}): {body}");
+        assert!(body.contains("fuera de Venezuela"), "body: {body}");
+
+        let filas: (i64,) = sqlx::query_as("SELECT count(*) FROM reportes WHERE id_usuario = $1")
+            .bind(&dispositivo)
+            .fetch_one(&pool)
+            .await
+            .expect("fallo la consulta de verificación");
+        assert_eq!(filas.0, 0, "({lat}, {lng}) no debe persistirse");
+    }
+}
+
+#[tokio::test]
+async fn el_rango_global_precede_a_la_geocerca() {
+    let (_, app) = aplicacion(caracas()).await;
+
+    let (status, body) = post_reporte(
+        &app,
+        &json!({
+            "id_usuario": dispositivo_unico(),
+            "lat": 90.0,
+            "lng": 0.0
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("fuera de Venezuela"), "body: {body}");
+
+    let (status, body) = post_reporte(
+        &app,
+        &json!({
+            "id_usuario": dispositivo_unico(),
+            "lat": 90.1,
+            "lng": 0.0
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("lat fuera de rango"), "body: {body}");
+}
+
+#[tokio::test]
+async fn id_usuario_invalido_precede_a_la_geocerca() {
+    let (_, app) = aplicacion(caracas()).await;
+
+    let (status, body) = post_reporte(
+        &app,
+        &json!({
+            "id_usuario": "abc1234",
+            "lat": -33.4489,
+            "lng": -70.6693
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("id_usuario"), "body: {body}");
+    assert!(!body.contains("Venezuela"), "body: {body}");
+}
+
+#[tokio::test]
+async fn horas_duracion_precede_a_la_geocerca() {
+    let (_, app) = aplicacion(caracas()).await;
+
+    let (status, body) = post_reporte(
+        &app,
+        &json!({
+            "id_usuario": dispositivo_unico(),
+            "lat": -33.4489,
+            "lng": -70.6693,
+            "horas_duracion": 169
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("horas_duracion"), "body: {body}");
+    assert!(!body.contains("Venezuela"), "body: {body}");
+}
+
+#[tokio::test]
+async fn el_feed_no_aplica_la_geocerca() {
+    let (pool, app) = aplicacion(caracas()).await;
+    limpiar_banda(&pool, -34.0).await;
+    let corte = coordenada_unica() * 0.001;
+    let (base_lat, base_lng) = (-33.4489 - corte, -70.6693 - corte);
+    let id = insertar_reporte(&pool, base_lat, base_lng, Utc::now()).await;
+
+    let query = format!(
+        "?min_lat={}&max_lat={}&min_lng={}&max_lng={}",
+        base_lat - 0.0005,
+        base_lat + 0.0005,
+        base_lng - 0.0005,
+        base_lng + 0.0005
+    );
+    let (status, body) = get_reportes(&app, &query).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    let respuesta: serde_json::Value = serde_json::from_str(&body).expect("respuesta no es json");
+    assert_eq!(ids_de(&respuesta), vec![id], "body: {body}");
 }
 
 #[tokio::test]

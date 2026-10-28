@@ -1,6 +1,7 @@
 use std::{
     io::{ErrorKind, Read, Write},
     net::TcpStream,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -29,6 +30,7 @@ use crate::modules::actividad::{
     application::conexion::atender_conexion_con_keepalive, domain::EVENTO_REPORTE_CREADO,
     infra::CanalActividad,
 };
+use crate::modules::reportes::domain::GeocercaVenezuela;
 use crate::modules::reportes::routes::router as router_reportes;
 
 use super::{ErrorHttpActividad, router};
@@ -295,10 +297,27 @@ async fn exigir_cierre(cliente: ClienteWs, presupuesto: Duration) {
     }
 }
 
+fn geocerca_de_prueba() -> Arc<GeocercaVenezuela> {
+    static GEOCERCA: OnceLock<Arc<GeocercaVenezuela>> = OnceLock::new();
+    GEOCERCA
+        .get_or_init(|| {
+            Arc::new(
+                GeocercaVenezuela::desde_datos_embebidos()
+                    .expect("el dataset embebido de fronteras debe cargar"),
+            )
+        })
+        .clone()
+}
+
 fn app_reportes_y_actividad(pool: sqlx::PgPool, canal: CanalActividad) -> Router {
     let horario_zona = FixedOffset::east_opt(0).expect("offset de prueba válido");
     Router::new()
-        .merge(router_reportes(pool, canal.clone(), horario_zona))
+        .merge(router_reportes(
+            pool,
+            canal.clone(),
+            horario_zona,
+            geocerca_de_prueba(),
+        ))
         .merge(router(canal))
 }
 
@@ -381,8 +400,8 @@ async fn un_post_valido_emite_el_evento_al_suscriptor() {
 
     let cuerpo = json!({
         "id_usuario": dispositivo_unico(),
-        "lat": -33.4489,
-        "lng": -70.6693,
+        "lat": 10.4806,
+        "lng": -66.9036,
         "horas_duracion": 2
     })
     .to_string();
@@ -398,8 +417,8 @@ async fn un_post_valido_emite_el_evento_al_suscriptor() {
         Some(EVENTO_REPORTE_CREADO)
     );
     assert_eq!(evento.get("id"), respuesta.get("id"));
-    assert_eq!(evento.get("lat").and_then(Value::as_f64), Some(-33.4489));
-    assert_eq!(evento.get("lng").and_then(Value::as_f64), Some(-70.6693));
+    assert_eq!(evento.get("lat").and_then(Value::as_f64), Some(10.4806));
+    assert_eq!(evento.get("lng").and_then(Value::as_f64), Some(-66.9036));
     assert_eq!(
         evento.get("horas_duracion").and_then(Value::as_u64),
         Some(2)
@@ -432,8 +451,8 @@ async fn dos_suscriptores_reciben_el_mismo_evento() {
 
     let cuerpo = json!({
         "id_usuario": dispositivo_unico(),
-        "lat": -33.11,
-        "lng": -70.22
+        "lat": 10.6545,
+        "lng": -71.6405
     })
     .to_string();
     let (status, _) = post_reporte(&app_post, &cuerpo).await;
@@ -460,8 +479,8 @@ async fn el_post_rechazado_no_emite_evento() {
 
     let cuerpo = json!({
         "id_usuario": dispositivo_unico(),
-        "lat": -33.55,
-        "lng": -70.77
+        "lat": 10.4806,
+        "lng": -66.9036
     })
     .to_string();
     let (status, _) = post_reporte(&app_post, &cuerpo).await;
@@ -489,6 +508,29 @@ async fn el_post_rechazado_no_emite_evento() {
 }
 
 #[tokio::test]
+async fn el_reporte_fuera_de_area_no_emite_evento() {
+    let pool = pool_de_prueba().await;
+    let canal = CanalActividad::nuevo(10);
+    let app = app_reportes_y_actividad(pool, canal);
+    let app_post = app.clone();
+    let puerto = levantar(app).await;
+
+    let cliente = exigir_silencio(conectar_ws(puerto).await, SINCRONIZACION).await;
+
+    let cuerpo = json!({
+        "id_usuario": dispositivo_unico(),
+        "lat": -33.4489,
+        "lng": -70.6693
+    })
+    .to_string();
+    let (status, body) = post_reporte(&app_post, &cuerpo).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("fuera de Venezuela"), "body: {body}");
+
+    drop(exigir_silencio(cliente, ESPERA_VACIA).await);
+}
+
+#[tokio::test]
 async fn el_mensaje_de_texto_del_cliente_no_cierra_ni_se_retransmite() {
     let pool = pool_de_prueba().await;
     let canal = CanalActividad::nuevo(10);
@@ -504,8 +546,8 @@ async fn el_mensaje_de_texto_del_cliente_no_cierra_ni_se_retransmite() {
 
     let cuerpo = json!({
         "id_usuario": dispositivo_unico(),
-        "lat": -33.66,
-        "lng": -70.88
+        "lat": 10.9577,
+        "lng": -63.8697
     })
     .to_string();
     let (status, _) = post_reporte(&app_post, &cuerpo).await;

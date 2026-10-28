@@ -3,6 +3,8 @@ mod cors;
 mod docs;
 mod modules;
 
+use std::sync::Arc;
+
 use axum::{Router, http::StatusCode, routing::get};
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
@@ -10,6 +12,7 @@ use tokio::net::TcpListener;
 use crate::config::Config;
 use crate::cors::capa;
 use crate::modules::actividad::{MAX_CONEXIONES_ACTIVIDAD, infra::CanalActividad};
+use crate::modules::reportes::domain::GeocercaVenezuela;
 
 /// Comprobación de salud del servicio.
 #[utoipa::path(
@@ -50,6 +53,14 @@ async fn main() {
         std::process::exit(1);
     }
 
+    let geocerca = match GeocercaVenezuela::desde_datos_embebidos() {
+        Ok(geocerca) => Arc::new(geocerca),
+        Err(error) => {
+            eprintln!("No se pudo cargar la geocerca de Venezuela: {error}");
+            std::process::exit(1);
+        }
+    };
+
     let port = 1234;
     let host = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&host).await.unwrap();
@@ -62,6 +73,7 @@ async fn main() {
             pool,
             canal.clone(),
             config.horario_zona,
+            geocerca,
         ))
         .merge(modules::actividad::routes::router(canal))
         .merge(docs::router_opcional(config.docs_habilitado))

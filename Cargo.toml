@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
 chrono = { version = "0.4.41", features = ["serde"] }
+country-boundaries = "1.2.0"
 dotenvy = "0.15.7"
 serde = "1.0.229"
 serde_json = "1.0.151"
